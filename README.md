@@ -117,7 +117,10 @@ Containerlab's default management network must have DNS and outbound access to
 the selected CVaaS endpoint on TCP 443.
 Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
 TerminAttr through that VRF. Existing topology files must be regenerated to
-include the setting.
+include the setting. Containerlab runs a post-deployment EOS command to configure
+and save DNS servers in `MGMT`. Use `--name-servers 10.0.0.53 10.0.0.54`
+when generating to replace the defaults; regenerate and redeploy existing labs
+to apply the setting.
 
 Generated labs use `172.100.100.0/22` on containerlab's default management
 network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
@@ -161,6 +164,47 @@ run. It submits the TerminAttr configuration to each cEOS container and reports
 individual failures; check CVaaS Inventory to confirm registration. Retry after
 nodes finish booting if they are not yet ready. As with the ACT workflow, a
 copy of the enrollment token is placed on each device for TerminAttr.
+
+#### Containerlab command arguments
+
+Use `./clab.py --help` or `./clab.py <command> --help` for help.
+
+**Generate:** `./clab.py generate SOURCE --name NAME --image IMAGE [options]`
+
+| Argument | Description |
+| --- | --- |
+| `SOURCE` | Required ACT topology YAML produced by `generate.sh`. |
+| `--name NAME` | Required containerlab name: lowercase letters, numbers, and hyphens, starting with a letter or number; maximum 63 characters. |
+| `--image IMAGE` | Required cEOS image name and tag available on the lab host. |
+| `--output FILE` | Output path; defaults to `<name>.clab.yml` in the current directory. |
+| `--mgmt-subnet CIDR` | IPv4 management subnet; defaults to `172.100.100.0/22`. |
+| `--mgmt-network NAME` | Docker management network name; defaults to containerlab's `clab` network. |
+| `--name-servers IP [IP ...]` | IPv4 DNS servers configured in the `MGMT` VRF; defaults to `8.8.8.8 1.1.1.1`. |
+| `-h`, `--help` | Show command help. |
+
+**Deploy:** `./clab.py deploy TOPOLOGY [options]`
+
+| Argument | Description |
+| --- | --- |
+| `TOPOLOGY` | Required generated containerlab topology file. |
+| `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to deploy locally. |
+| `--mgmt-network NAME` | Override the management network for this deployment; the local topology file is not changed. |
+| `-h`, `--help` | Show command help. |
+
+**Onboard:** `./clab.py onboard TOPOLOGY [options]`
+
+| Argument | Description |
+| --- | --- |
+| `TOPOLOGY` | Required generated containerlab topology file. |
+| `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to onboard local containers. |
+| `--endpoint HOSTNAME` | CVaaS API hostname, such as `apiserver.arista.io`; prompts if omitted. |
+| `-h`, `--help` | Show command help. |
+
+For example, to onboard a lab on a remote host:
+
+```bash
+./clab.py onboard rclark-lab.clab.yml --host user@lab-host --endpoint apiserver.arista.io
+```
 
 ### Once you created a lab (or you have one running) already
 
