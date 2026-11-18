@@ -93,6 +93,119 @@ Upload the generated YAML to the ACT account associated with your API key:
 #   Deployed lab 'topology-rclark-2026-09-15-lab'.
 ```
 
+### Build a containerlab lab
+
+The containerlab workflow uses the same topology choices and links as the ACT
+generator. First run `./generate.sh`, then convert its generated ACT YAML:
+
+```bash
+./generate.sh
+./clab.py generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M
+# Optional: choose a different management subnet when generating:
+# ./clab.py generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M --mgmt-subnet 10.40.0.0/23
+./clab.py deploy rclark-lab.clab.yml
+./clab.py onboard rclark-lab.clab.yml --endpoint apiserver.arista.io
+```
+
+Run the last two commands on the Linux lab host, or add `--host user@lab-host`
+to run them over SSH. The initiating machine needs Python 3 and Mike Farah
+`yq` v4. The Linux host needs containerlab, Docker, and the specified cEOS
+image already loaded or accessible. Remote access uses your SSH configuration
+and noninteractive authentication; the host must allow passwordless `sudo` for
+containerlab and either Docker access or passwordless `sudo` for Docker.
+Containerlab's default management network must have DNS and outbound access to
+the selected CVaaS endpoint on TCP 443.
+Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
+TerminAttr through that VRF. Existing topology files must be regenerated to
+include the setting. Containerlab runs a post-deployment EOS command to configure
+and save DNS servers in `MGMT`. Use `--name-servers 10.0.0.53 10.0.0.54`
+when generating to replace the defaults; regenerate and redeploy existing labs
+to apply the setting.
+
+Generated labs use `172.100.100.0/22` on containerlab's default management
+network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
+if the subnet already belongs to another Docker network, select that network
+with `--mgmt-network` when generating. For an existing generated file, select
+it for deployment without editing the file:
+
+```bash
+./clab.py deploy --host user@lab-host --mgmt-network mgmt rclark-lab.clab.yml
+```
+
+The named network must have the configured subnet. This option changes the copy
+of the topology stored on the host, not the local file; use it on each deployment.
+Containerlab's other management network requirements still apply.
+
+If SSH reports `Permission denied` reading `/etc/ssh/ssh_config.d/clab-<lab>.conf`,
+check the file and its parent directories with `namei -l` on the lab host. If
+the lab's system SSH config is not readable, an administrator can make that
+config readable (replace the lab name):
+
+```bash
+sudo chmod 644 /etc/ssh/ssh_config.d/clab-rclark-lab.conf
+```
+
+This fixes an existing file; it does not change permissions on SSH private keys.
+
+Deployment saves the topology on the host at
+`~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
+`sudo containerlab destroy -t ~/.act-automation/clab/<lab-name>/topology.clab.yml`
+on that host. Destroying the lab is separate from decommissioning its CVaaS
+devices. Re-run conversion with the same source identities and lab name to
+retain the same intended cEOS serials; changing the ACT serial prefix changes
+them. The generated serials are separate from ACT serials. The workflow sets
+`CEOS_SERIAL_NUMBER`, but persistence depends on the cEOS image: verify the
+reported serial before and after redeployment on your host before relying on
+CVaaS identity continuity. Avoid running multiple labs with the same source
+serials simultaneously.
+
+Onboarding supports generated containerlab files and prompts for a token each
+run. It submits the TerminAttr configuration to each cEOS container and reports
+individual failures; check CVaaS Inventory to confirm registration. Retry after
+nodes finish booting if they are not yet ready. As with the ACT workflow, a
+copy of the enrollment token is placed on each device for TerminAttr.
+
+#### Containerlab command arguments
+
+Use `./clab.py --help` or `./clab.py <command> --help` for help.
+
+**Generate:** `./clab.py generate SOURCE --name NAME --image IMAGE [options]`
+
+| Argument | Description |
+| --- | --- |
+| `SOURCE` | Required ACT topology YAML produced by `generate.sh`. |
+| `--name NAME` | Required containerlab name: lowercase letters, numbers, and hyphens, starting with a letter or number; maximum 63 characters. |
+| `--image IMAGE` | Required cEOS image name and tag available on the lab host. |
+| `--output FILE` | Output path; defaults to `<name>.clab.yml` in the current directory. |
+| `--mgmt-subnet CIDR` | IPv4 management subnet; defaults to `172.100.100.0/22`. |
+| `--mgmt-network NAME` | Docker management network name; defaults to containerlab's `clab` network. |
+| `--name-servers IP [IP ...]` | IPv4 DNS servers configured in the `MGMT` VRF; defaults to `8.8.8.8 1.1.1.1`. |
+| `-h`, `--help` | Show command help. |
+
+**Deploy:** `./clab.py deploy TOPOLOGY [options]`
+
+| Argument | Description |
+| --- | --- |
+| `TOPOLOGY` | Required generated containerlab topology file. |
+| `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to deploy locally. |
+| `--mgmt-network NAME` | Override the management network for this deployment; the local topology file is not changed. |
+| `-h`, `--help` | Show command help. |
+
+**Onboard:** `./clab.py onboard TOPOLOGY [options]`
+
+| Argument | Description |
+| --- | --- |
+| `TOPOLOGY` | Required generated containerlab topology file. |
+| `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to onboard local containers. |
+| `--endpoint HOSTNAME` | CVaaS API hostname, such as `apiserver.arista.io`; prompts if omitted. |
+| `-h`, `--help` | Show command help. |
+
+For example, to onboard a lab on a remote host:
+
+```bash
+./clab.py onboard rclark-lab.clab.yml --host user@lab-host --endpoint apiserver.arista.io
+```
+
 ### Once you created a lab (or you have one running) already
 
 1. Collect an ACT API key from the ACT UI
@@ -146,6 +259,7 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 | `onboard.sh`  | Lists your Running labs and onboards every vEOS switch to CVaaS. |
 | `generate.sh` | *(optional)* Interactive topology generator with pinned serials + MACs. Asks for a serial prefix; caches spine/leaf counts, MLAG choice, and EOS version. |
 | `act_topology.sh` | Uploads a topology YAML to ACT and optionally creates + deploys a lab. Shares cached ACT credentials with `onboard.sh`. |
+| `clab.py` | Converts generated ACT topologies to containerlab and deploys or onboards cEOS labs locally or over SSH. |
 | `_common.sh`  | Shared helpers (prompt/cache/tool-check). Sourced by the scripts; don't run directly. |
 | `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `generate.sh`. Filename must be unique across the ACT tenant — `generate.sh` enforces the convention. |
 | `.config`     | Auto-generated cache of your answers. **gitignored.** Delete to re-prompt. |
