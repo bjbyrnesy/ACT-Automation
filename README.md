@@ -122,6 +122,15 @@ and save DNS servers in `MGMT`. Use `--name-servers 10.0.0.53 10.0.0.54`
 when generating to replace the defaults; regenerate and redeploy existing labs
 to apply the setting.
 
+Container names are `clab-<lab-name>-<node>`. Keep `--name` short. A leading
+`clab-` on ACT hostnames is stripped during conversion so you get
+`clab-campus-A-mleaf1` instead of `clab-2site-campus-clab-A-mleaf1`.
+
+`clab.py` reads optional defaults from `.config` in the current directory (same
+file as the shell scripts). CLI flags override. Useful keys: `CLAB_NAME`,
+`CLAB_IMAGE` (or `EOS_VERSION` → `ceos:$EOS_VERSION`), `CLAB_HOST`,
+`CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CVAAS_HOST`, `CVAAS_TOKEN`.
+
 Generated labs use `172.100.100.0/22` on containerlab's default management
 network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
 if the subnet already belongs to another Docker network, select that network
@@ -257,12 +266,12 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 | File | Purpose |
 | ---- | ------- |
 | `onboard.sh`  | Lists your Running labs and onboards every vEOS switch to CVaaS. |
-| `generate.sh` | *(optional)* Interactive topology generator with pinned serials + MACs. Asks for a serial prefix; caches spine/leaf counts, MLAG choice, and EOS version. |
+| `generate.sh` | *(optional)* Interactive topology generator with pinned serials + MACs. Multi-site asks fabric mode: `l3ls` (border leaves) or `l2` (backbone on spines). |
 | `act_topology.sh` | Uploads a topology YAML to ACT and optionally creates + deploys a lab. Shares cached ACT credentials with `onboard.sh`. |
 | `clab.py` | Converts generated ACT topologies to containerlab and deploys or onboards cEOS labs locally or over SSH. |
 | `_common.sh`  | Shared helpers (prompt/cache/tool-check). Sourced by the scripts; don't run directly. |
 | `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `generate.sh`. Filename must be unique across the ACT tenant — `generate.sh` enforces the convention. |
-| `.config`     | Auto-generated cache of your answers. **gitignored.** Delete to re-prompt. |
+| `.config`     | Auto-generated cache of your answers (ACT/CVaaS + optional `CLAB_*`). **gitignored.** Delete to re-prompt. |
 
 
 ## Redeploying
