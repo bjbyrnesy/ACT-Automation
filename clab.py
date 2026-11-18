@@ -47,6 +47,12 @@ def validate_lab(path):
     return lab
 
 
+def validate_network_name(name):
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name):
+        fail('Invalid Docker management network name.')
+    return name
+
+
 def generate(args):
     if not NAME.fullmatch(args.name):
         fail('Lab name must be lowercase letters, numbers and hyphens, starting with a letter or number (maximum 63 characters).')
@@ -70,7 +76,7 @@ def generate(args):
         if not NODE.fullmatch(name) or not isinstance(data, dict) or data.get('node_type') != 'veos' or not data.get('serial_number'):
             fail(f'Invalid vEOS node: {name}')
         serial = 'CLAB' + hashlib.sha256(str(data['serial_number']).encode()).hexdigest()[:12].upper()
-        nodes[name] = {'kind': 'arista_ceos', 'image': args.image, 'env': {'CEOS_SERIAL_NUMBER': serial}}
+        nodes[name] = {'kind': 'arista_ceos', 'image': args.image, 'env': {'CEOS_SERIAL_NUMBER': serial, 'CLAB_MGMT_VRF': 'MGMT'}}
     if not nodes:
         fail('Topology contains no vEOS nodes.')
     used = set()
@@ -90,6 +96,8 @@ def generate(args):
         links.append({'endpoints': converted})
     lab = {'name': args.name, 'mgmt': {'ipv4-subnet': str(subnet)},
            'topology': {'nodes': nodes, 'links': links}}
+    if args.mgmt_network:
+        lab['mgmt']['network'] = validate_network_name(args.mgmt_network)
     output = Path(args.output or f'{args.name}.clab.yml')
     output.write_text(MARKER + json.dumps(lab, indent=2) + '\n')
     print(f'Wrote {output}')
@@ -100,8 +108,7 @@ DEPLOY_SCRIPT = r'''set -eu
 name=$1
 dir="$HOME/.act-automation/clab/$name"
 mkdir -p "$dir"
-umask 077
-cat > "$dir/topology.clab.yml"
+(umask 077; cat > "$dir/topology.clab.yml")
 if [ "$(id -u)" -eq 0 ]; then
   containerlab deploy -t "$dir/topology.clab.yml"
 else
@@ -129,7 +136,15 @@ def host_run(host, script, args, data):
 def deploy(args):
     path = Path(args.topology)
     lab = validate_lab(path)
-    result = host_run(args.host, DEPLOY_SCRIPT, [lab['name']], path.read_text())
+    content = path.read_text()
+    if args.mgmt_network:
+        network = validate_network_name(args.mgmt_network)
+        mgmt = lab.setdefault('mgmt', {})
+        if not isinstance(mgmt, dict):
+            fail('Invalid management network configuration.')
+        mgmt['network'] = network
+        content = MARKER + json.dumps(lab, indent=2) + '\n'
+    result = host_run(args.host, DEPLOY_SCRIPT, [lab['name']], content)
     if result.stdout:
         print(result.stdout, end='')
     if result.returncode:
@@ -160,7 +175,10 @@ def onboard(args):
     failures = []
     for node in lab['topology']['nodes']:
         container = f"clab-{lab['name']}-{node}"
-        result = host_run(args.host, DOCKER_SCRIPT, [container], commands)
+        env = lab['topology']['nodes'][node].get('env', {})
+        vrf_flag = ' -cvvrf=MGMT' if isinstance(env, dict) and env.get('CLAB_MGMT_VRF') == 'MGMT' else ''
+        node_commands = commands.replace(' -taillogs', vrf_flag + ' -taillogs')
+        result = host_run(args.host, DOCKER_SCRIPT, [container], node_commands)
         if result.returncode or re.search(r'(?im)^\s*%\s*(?:error|invalid|incomplete|ambiguous)', result.stdout):
             failures.append(node)
             print(f'  {node}: failed (check container and EOS readiness)', file=sys.stderr)
@@ -181,11 +199,14 @@ def main():
     gen.add_argument('--output')
     gen.add_argument('--mgmt-subnet', default='172.100.100.0/22',
                      help='IPv4 management subnet (default: 172.100.100.0/22)')
+    gen.add_argument('--mgmt-network', help='Docker management network name (default: clab)')
     gen.set_defaults(func=generate)
     for command, handler in [('deploy', deploy), ('onboard', onboard)]:
         action = sub.add_parser(command)
         action.add_argument('topology')
         action.add_argument('--host', help='SSH alias or user@host; omit to run locally')
+        if command == 'deploy':
+            action.add_argument('--mgmt-network', help='Use this Docker management network for this deployment')
         if command == 'onboard':
             action.add_argument('--endpoint', help='CVaaS hostname (default: prompt)')
         action.set_defaults(func=handler)

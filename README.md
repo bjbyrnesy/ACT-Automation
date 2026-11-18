@@ -115,10 +115,34 @@ and noninteractive authentication; the host must allow passwordless `sudo` for
 containerlab and either Docker access or passwordless `sudo` for Docker.
 Containerlab's default management network must have DNS and outbound access to
 the selected CVaaS endpoint on TCP 443.
+Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
+TerminAttr through that VRF. Existing topology files must be regenerated to
+include the setting.
+
 Generated labs use `172.100.100.0/22` on containerlab's default management
 network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
-if the default Docker management network already exists with a different subnet,
-resolve that conflict on the host before deployment.
+if the subnet already belongs to another Docker network, select that network
+with `--mgmt-network` when generating. For an existing generated file, select
+it for deployment without editing the file:
+
+```bash
+./clab.py deploy --host user@lab-host --mgmt-network mgmt rclark-lab.clab.yml
+```
+
+The named network must have the configured subnet. This option changes the copy
+of the topology stored on the host, not the local file; use it on each deployment.
+Containerlab's other management network requirements still apply.
+
+If SSH reports `Permission denied` reading `/etc/ssh/ssh_config.d/clab-<lab>.conf`,
+check the file and its parent directories with `namei -l` on the lab host. If
+the lab's system SSH config is not readable, an administrator can make that
+config readable (replace the lab name):
+
+```bash
+sudo chmod 644 /etc/ssh/ssh_config.d/clab-rclark-lab.conf
+```
+
+This fixes an existing file; it does not change permissions on SSH private keys.
 
 Deployment saves the topology on the host at
 `~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
