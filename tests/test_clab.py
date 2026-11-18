@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import shutil
+import shlex
 import tempfile
 import unittest
 import importlib.util
@@ -28,7 +29,9 @@ class ContainerlabTests(unittest.TestCase):
             command = lab['topology']['kinds']['arista_ceos']['exec'][0]
             self.assertIn('ip name-server vrf MGMT 8.8.8.8', command)
             self.assertIn('ip name-server vrf MGMT 1.1.1.1', command)
-            self.assertIn('write memory', command)
+            args = shlex.split(command)
+            self.assertEqual(args[:4], ['Cli', '-p', '15', '-c'])
+            self.assertEqual(args[4].splitlines(), ['enable', 'configure terminal', 'ip name-server vrf MGMT 8.8.8.8', 'ip name-server vrf MGMT 1.1.1.1', 'end', 'write memory'])
             self.assertEqual(set(lab['topology']['nodes']), {'demo-spine1', 'demo-leaf1'})
             self.assertEqual(lab['topology']['links'][0]['endpoints'], ['demo-spine1:eth1', 'demo-leaf1:eth1'])
             node = lab['topology']['nodes']['demo-spine1']

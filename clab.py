@@ -101,7 +101,7 @@ def generate(args):
     dns_commands = ['enable', 'configure terminal']
     dns_commands.extend(f'ip name-server vrf MGMT {address}' for address in name_servers)
     dns_commands.extend(['end', 'write memory'])
-    dns_exec = 'Cli -p 15 -c ' + shlex.quote('; '.join(dns_commands))
+    dns_exec = 'Cli -p 15 -c ' + shlex.quote('\n'.join(dns_commands))
     lab = {'name': args.name, 'mgmt': {'ipv4-subnet': str(subnet)},
            'topology': {'kinds': {'arista_ceos': {'exec': [dns_exec]}},
                         'nodes': nodes, 'links': links}}
