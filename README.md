@@ -93,6 +93,45 @@ Upload the generated YAML to the ACT account associated with your API key:
 #   Deployed lab 'topology-rclark-2026-09-15-lab'.
 ```
 
+### Build a containerlab lab
+
+The containerlab workflow uses the same topology choices and links as the ACT
+generator. First run `./generate.sh`, then convert its generated ACT YAML:
+
+```bash
+./generate.sh
+./clab.py generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M
+./clab.py deploy rclark-lab.clab.yml
+./clab.py onboard rclark-lab.clab.yml --endpoint apiserver.arista.io
+```
+
+Run the last two commands on the Linux lab host, or add `--host user@lab-host`
+to run them over SSH. The initiating machine needs Python 3 and Mike Farah
+`yq` v4. The Linux host needs containerlab, Docker, and the specified cEOS
+image already loaded or accessible. Remote access uses your SSH configuration
+and noninteractive authentication; the host must allow passwordless `sudo` for
+containerlab and either Docker access or passwordless `sudo` for Docker.
+Containerlab's default management network must have DNS and outbound access to
+the selected CVaaS endpoint on TCP 443.
+
+Deployment saves the topology on the host at
+`~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
+`sudo containerlab destroy -t ~/.act-automation/clab/<lab-name>/topology.clab.yml`
+on that host. Destroying the lab is separate from decommissioning its CVaaS
+devices. Re-run conversion with the same source identities and lab name to
+retain the same intended cEOS serials; changing the ACT serial prefix changes
+them. The generated serials are separate from ACT serials. The workflow sets
+`CEOS_SERIAL_NUMBER`, but persistence depends on the cEOS image: verify the
+reported serial before and after redeployment on your host before relying on
+CVaaS identity continuity. Avoid running multiple labs with the same source
+serials simultaneously.
+
+Onboarding supports generated containerlab files and prompts for a token each
+run. It submits the TerminAttr configuration to each cEOS container and reports
+individual failures; check CVaaS Inventory to confirm registration. Retry after
+nodes finish booting if they are not yet ready. As with the ACT workflow, a
+copy of the enrollment token is placed on each device for TerminAttr.
+
 ### Once you created a lab (or you have one running) already
 
 1. Collect an ACT API key from the ACT UI
@@ -146,6 +185,7 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 | `onboard.sh`  | Lists your Running labs and onboards every vEOS switch to CVaaS. |
 | `generate.sh` | *(optional)* Interactive topology generator with pinned serials + MACs. Asks for a serial prefix; caches spine/leaf counts, MLAG choice, and EOS version. |
 | `act_topology.sh` | Uploads a topology YAML to ACT and optionally creates + deploys a lab. Shares cached ACT credentials with `onboard.sh`. |
+| `clab.py` | Converts generated ACT topologies to containerlab and deploys or onboards cEOS labs locally or over SSH. |
 | `_common.sh`  | Shared helpers (prompt/cache/tool-check). Sourced by the scripts; don't run directly. |
 | `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `generate.sh`. Filename must be unique across the ACT tenant — `generate.sh` enforces the convention. |
 | `.config`     | Auto-generated cache of your answers. **gitignored.** Delete to re-prompt. |
