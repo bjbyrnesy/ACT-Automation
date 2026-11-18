@@ -101,6 +101,8 @@ generator. First run `./generate.sh`, then convert its generated ACT YAML:
 ```bash
 ./generate.sh
 ./clab.py generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M
+# Optional: choose a different management subnet when generating:
+# ./clab.py generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M --mgmt-subnet 10.40.0.0/23
 ./clab.py deploy rclark-lab.clab.yml
 ./clab.py onboard rclark-lab.clab.yml --endpoint apiserver.arista.io
 ```
@@ -113,6 +115,10 @@ and noninteractive authentication; the host must allow passwordless `sudo` for
 containerlab and either Docker access or passwordless `sudo` for Docker.
 Containerlab's default management network must have DNS and outbound access to
 the selected CVaaS endpoint on TCP 443.
+Generated labs use `172.100.100.0/22` on containerlab's default management
+network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
+if the default Docker management network already exists with a different subnet,
+resolve that conflict on the host before deployment.
 
 Deployment saves the topology on the host at
 `~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
