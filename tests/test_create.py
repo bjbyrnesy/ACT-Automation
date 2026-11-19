@@ -1,9 +1,11 @@
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
+from acta import create
 from acta.capacity import Capacity
-from acta.create import FabricSpec, capacity_banner, emit_act_yaml
+from acta.create import FabricSpec, _prompt_int, capacity_banner, emit_act_yaml
 from acta.mac import generate_mac
 from acta.topology import parse_connections
 
@@ -13,6 +15,61 @@ def test_capacity_banner_mentions_extend_commands():
     assert "acta.py extend" in text
     assert "--add leaf" in text
     assert "--add mleaf" in text
+
+
+def test_prompt_int_clamps_default_and_reprompts_above_maximum(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    responses = iter(["3", ""])
+    defaults: list[str | None] = []
+
+    def prompt_value(label: str, default: str | None = None) -> str:
+        defaults.append(default)
+        return next(responses) or default or ""
+
+    monkeypatch.setattr(create, "prompt_value", prompt_value)
+
+    assert _prompt_int("Member leaves", 4, maximum=2) == 2
+    assert defaults == ["2", "2"]
+    assert "between 1 and 2" in capsys.readouterr().err
+
+
+def test_run_create_clamps_cached_member_leaf_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    (tmp_path / ".config").write_text(
+        "MEMBER_LEAVES_PER_PAIR=4\nMAX_MLEAFS_PER_PAIR=4",
+        encoding="utf-8",
+    )
+    responses = iter(
+        [
+            "demo",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "1",
+            "y",
+            "",
+            "1",
+            "",
+            "",
+        ]
+    )
+    monkeypatch.setattr(create.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(
+        create,
+        "prompt_value",
+        lambda label, default=None: next(responses) or default or "",
+    )
+
+    output_path = create.run_create(tmp_path)
+
+    assert "demo-mleaf1:" in output_path.read_text(encoding="utf-8")
+    assert create.load_config(tmp_path / ".config")["MEMBER_LEAVES_PER_PAIR"] == "1"
 
 
 def test_emit_includes_capacity_and_mesh_without_spare_links():

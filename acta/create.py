@@ -229,17 +229,31 @@ def emit_act_yaml(spec: FabricSpec) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _prompt_int(label: str, default: int, minimum: int = 1) -> int:
+def _prompt_int(
+    label: str,
+    default: int,
+    minimum: int = 1,
+    maximum: int | None = None,
+) -> int:
+    default = max(default, minimum)
+    if maximum is not None:
+        if maximum < minimum:
+            raise ValueError("maximum must be greater than or equal to minimum")
+        default = min(default, maximum)
+
     while True:
         value = prompt_value(label, str(default))
         try:
             number = int(value)
         except ValueError:
-            print(f"  Enter a whole number of at least {minimum}.", file=sys.stderr)
-            continue
-        if number >= minimum:
+            number = minimum - 1
+        if number >= minimum and (maximum is None or number <= maximum):
             return number
-        print(f"  Enter a whole number of at least {minimum}.", file=sys.stderr)
+        if maximum is None:
+            requirement = f"at least {minimum}"
+        else:
+            requirement = f"between {minimum} and {maximum}"
+        print(f"  Enter a whole number {requirement}.", file=sys.stderr)
 
 
 def _prompt_yes_no(label: str, default: bool = False) -> bool:
@@ -311,10 +325,14 @@ def run_create(project_dir: Path) -> Path:
     max_spines = _prompt_int(
         "Maximum spines",
         max(spines, _configured_int(config, "MAX_SPINES", 4)),
+        minimum=spines,
+        maximum=HARD_PORT_MAX,
     )
     max_leaves = _prompt_int(
         "Maximum leaves",
         max(leaves, _configured_int(config, "MAX_LEAVES", 8)),
+        minimum=leaves,
+        maximum=HARD_PORT_MAX,
     )
     max_mleafs_per_pair = _prompt_int(
         "Maximum member leaves per leaf pair",
@@ -324,6 +342,7 @@ def run_create(project_dir: Path) -> Path:
             _configured_int(config, "MAX_MLEAFS_PER_PAIR", 2),
         ),
         minimum=0,
+        maximum=HARD_PORT_MAX,
     )
 
     mlag_pairs = _prompt_yes_no(
@@ -356,6 +375,7 @@ def run_create(project_dir: Path) -> Path:
                     1,
                     _configured_int(config, "MEMBER_LEAVES_PER_PAIR", 2),
                 ),
+                maximum=max_mleafs_per_pair,
             )
 
     eos_version = prompt_value(
