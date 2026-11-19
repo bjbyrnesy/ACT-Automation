@@ -71,6 +71,21 @@ def format_capacity_header(cap: Capacity) -> str:
     return f"{line1}\n{line2}\n"
 
 
+def validate_reserved_port_budget(cap: Capacity) -> None:
+    """Ensure all reserved topology slots fit within the hardware port limit."""
+    leaf_port_max = cap.max_spines + 2 + cap.max_mleafs_per_pair
+    if leaf_port_max > HARD_PORT_MAX:
+        raise ValueError(
+            f"reserved leaf ports exceed the {HARD_PORT_MAX}-port hard cap"
+        )
+
+    spine_port_max = cap.max_leaves + (2 if cap.max_spines >= 2 else 0)
+    if spine_port_max > HARD_PORT_MAX:
+        raise ValueError(
+            f"reserved spine ports exceed the {HARD_PORT_MAX}-port hard cap"
+        )
+
+
 def validate_create_capacity(cap: Capacity) -> None:
     if cap.max_leaves < cap.leaves:
         raise ValueError("max_leaves must be >= current leaves")
@@ -82,3 +97,4 @@ def validate_create_capacity(cap: Capacity) -> None:
         raise ValueError("L2 fabric spines hard-capped at 2")
     if cap.max_spines > HARD_PORT_MAX or cap.max_leaves > HARD_PORT_MAX:
         raise ValueError(f"planned width cannot exceed {HARD_PORT_MAX} ports")
+    validate_reserved_port_budget(cap)

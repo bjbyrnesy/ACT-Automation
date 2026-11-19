@@ -57,3 +57,17 @@ def test_validate_l2_rejects_spines_above_2():
     )
     with pytest.raises(ValueError, match="L2"):
         validate_create_capacity(cap)
+
+
+def test_validate_rejects_reserved_leaf_ports_above_hard_cap():
+    cap = Capacity(
+        fabric_mode=None,
+        max_spines=16,
+        max_leaves=8,
+        max_mleafs_per_pair=1,
+        spines=2,
+        leaves=4,
+    )
+
+    with pytest.raises(ValueError, match="reserved leaf ports.*16-port hard cap"):
+        validate_create_capacity(cap)

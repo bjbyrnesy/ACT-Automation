@@ -322,28 +322,42 @@ def run_create(project_dir: Path) -> Path:
 
     print()
     print(capacity_banner())
-    max_spines = _prompt_int(
-        "Maximum spines",
-        max(spines, _configured_int(config, "MAX_SPINES", 4)),
-        minimum=spines,
-        maximum=HARD_PORT_MAX,
-    )
-    max_leaves = _prompt_int(
-        "Maximum leaves",
-        max(leaves, _configured_int(config, "MAX_LEAVES", 8)),
-        minimum=leaves,
-        maximum=HARD_PORT_MAX,
-    )
-    max_mleafs_per_pair = _prompt_int(
-        "Maximum member leaves per leaf pair",
-        max(
-            2,
-            _configured_int(config, "MEMBER_LEAVES_PER_PAIR", 0),
-            _configured_int(config, "MAX_MLEAFS_PER_PAIR", 2),
-        ),
-        minimum=0,
-        maximum=HARD_PORT_MAX,
-    )
+    while True:
+        max_spines = _prompt_int(
+            "Maximum spines",
+            max(spines, _configured_int(config, "MAX_SPINES", 4)),
+            minimum=spines,
+            maximum=HARD_PORT_MAX,
+        )
+        max_leaves = _prompt_int(
+            "Maximum leaves",
+            max(leaves, _configured_int(config, "MAX_LEAVES", 8)),
+            minimum=leaves,
+            maximum=HARD_PORT_MAX,
+        )
+        max_mleafs_per_pair = _prompt_int(
+            "Maximum member leaves per leaf pair",
+            max(
+                2,
+                _configured_int(config, "MEMBER_LEAVES_PER_PAIR", 0),
+                _configured_int(config, "MAX_MLEAFS_PER_PAIR", 2),
+            ),
+            minimum=0,
+            maximum=HARD_PORT_MAX,
+        )
+        capacity = Capacity(
+            fabric_mode=None,
+            max_spines=max_spines,
+            max_leaves=max_leaves,
+            max_mleafs_per_pair=max_mleafs_per_pair,
+            spines=spines,
+            leaves=leaves,
+        )
+        try:
+            validate_create_capacity(capacity)
+            break
+        except ValueError as error:
+            print(f"  {error}; choose smaller capacity limits", file=sys.stderr)
 
     mlag_pairs = _prompt_yes_no(
         "Pair leaves into MLAG pairs (y/n)",
@@ -381,14 +395,6 @@ def run_create(project_dir: Path) -> Path:
     eos_version = prompt_value(
         "EOS version",
         config.get("EOS_VERSION") or DEFAULT_EOS_VERSION,
-    )
-    capacity = Capacity(
-        fabric_mode=None,
-        max_spines=max_spines,
-        max_leaves=max_leaves,
-        max_mleafs_per_pair=max_mleafs_per_pair,
-        spines=spines,
-        leaves=leaves,
     )
     spec = FabricSpec(
         hostname_prefix=hostname_prefix,

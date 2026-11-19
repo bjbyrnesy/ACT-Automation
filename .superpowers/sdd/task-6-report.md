@@ -12,3 +12,13 @@ Review fix evidence (2026-11-19):
 - `save_config` mode 0o600 and MAX_SPINES/MAX_LEAVES/MAX_MLEAFS_PER_PAIR round-trip are covered with `tmp_path`.
 - `uv run pytest tests/test_create.py tests/test_config.py -v`: 9 passed.
 - Black and Ruff passed for `acta/create.py`, `tests/test_create.py`, and `tests/test_config.py`.
+
+Reserved port-budget fix evidence (2026-11-19):
+- Shared create-capacity validation reserves leaf spine-facing, MLAG peer, and
+  member-leaf slots within Ethernet16, plus spine MLAG slots for two-spine plans.
+- Interactive create retries all capacity limits when the shared validator rejects
+  their reserved port budget, preventing emit-only failures.
+- `max_spines=16` with `max_mleafs_per_pair=1` is covered as a rejected plan.
+- `uv run pytest tests/test_capacity.py tests/test_create.py tests/test_portplan.py -q`:
+  18 passed.
+- Black and Ruff passed for all changed Python files.
