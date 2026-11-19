@@ -6,6 +6,7 @@ from acta.capacity import (
     format_capacity_header,
     parse_capacity_header,
     validate_create_capacity,
+    validate_current_capacity,
 )
 
 
@@ -71,3 +72,10 @@ def test_validate_rejects_reserved_leaf_ports_above_hard_cap():
 
     with pytest.raises(ValueError, match="reserved leaf ports.*16-port hard cap"):
         validate_create_capacity(cap)
+
+
+def test_validate_current_capacity_rejects_impossible_spine_count():
+    with pytest.raises(
+        ValueError, match="current counts leave no valid capacity.*16-port hard cap"
+    ):
+        validate_current_capacity(spines=15, leaves=2)

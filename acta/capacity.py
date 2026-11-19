@@ -98,3 +98,12 @@ def validate_create_capacity(cap: Capacity) -> None:
     if cap.max_spines > HARD_PORT_MAX or cap.max_leaves > HARD_PORT_MAX:
         raise ValueError(f"planned width cannot exceed {HARD_PORT_MAX} ports")
     validate_reserved_port_budget(cap)
+
+
+def validate_current_capacity(spines: int, leaves: int) -> None:
+    """Ensure current counts leave room for the minimum reserved-port budget."""
+    capacity = Capacity(None, spines, leaves, 0, spines, leaves)
+    try:
+        validate_create_capacity(capacity)
+    except ValueError as error:
+        raise ValueError(f"current counts leave no valid capacity: {error}") from error

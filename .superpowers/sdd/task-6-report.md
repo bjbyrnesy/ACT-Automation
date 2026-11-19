@@ -22,3 +22,8 @@ Reserved port-budget fix evidence (2026-11-19):
 - `uv run pytest tests/test_capacity.py tests/test_create.py tests/test_portplan.py -q`:
   18 passed.
 - Black and Ruff passed for all changed Python files.
+
+Impossible current-count fix evidence (2026-11-19):
+- Current spine/leaf counts are validated against the minimum reserved-port budget
+  before maximum prompts; impossible counts re-prompt instead of entering that loop.
+- A 15-spine current fabric fails fast with a clear `ValueError`.

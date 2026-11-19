@@ -11,6 +11,7 @@ from acta.capacity import (
     Capacity,
     format_capacity_header,
     validate_create_capacity,
+    validate_current_capacity,
 )
 from acta.config import load_config, save_config
 from acta.mac import generate_mac
@@ -311,14 +312,18 @@ def run_create(project_dir: Path) -> Path:
             "hostname prefix must be alphanumeric with optional internal dashes"
         )
 
-    spines = _prompt_int(
-        "Number of spines",
-        _configured_int(config, "SPINE_COUNT", 2),
-    )
-    leaves = _prompt_int(
-        "Number of leaves",
-        _configured_int(config, "LEAF_COUNT", 4),
-    )
+    while True:
+        spines = _prompt_int(
+            "Number of spines", _configured_int(config, "SPINE_COUNT", 2)
+        )
+        leaves = _prompt_int(
+            "Number of leaves", _configured_int(config, "LEAF_COUNT", 4)
+        )
+        try:
+            validate_current_capacity(spines, leaves)
+            break
+        except ValueError as error:
+            print(f"  {error}; choose smaller current counts", file=sys.stderr)
 
     print()
     print(capacity_banner())
