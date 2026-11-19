@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from acta.capacity import Capacity, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
 from acta.extend import extend_topology
@@ -51,3 +53,8 @@ def test_add_leaf_preserves_existing_endpoints(tmp_path: Path):
         ("demo-spine2", 3, "demo-leaf3", 2),
     }
     assert parse_capacity_header(path.read_text()).leaves == 3
+
+
+def test_warns_when_leaf_exceeds_soft_capacity(tmp_path: Path):
+    with pytest.warns(UserWarning, match=r"leaf9 exceeds.*max_leaves=8"):
+        extend_topology(_write_base(tmp_path), add="leaf", count=7)

@@ -187,6 +187,12 @@ def extend_topology(
     updated_text = text
 
     for leaf_index in range(next_leaf, next_leaf + count):
+        if leaf_index > capacity.max_leaves:
+            warnings.warn(
+                f"leaf{leaf_index} exceeds planned soft capacity "
+                f"max_leaves={capacity.max_leaves}; continuing with available ports",
+                stacklevel=2,
+            )
         leaf_name = f"{hostname_prefix}-leaf{leaf_index}"
         new_connections: list[Connection] = []
         leaf_used: set[int] = set()
