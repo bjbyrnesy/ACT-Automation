@@ -10,11 +10,6 @@ ACT Automation.code-workspace
 # Any topology files
 topology*
 *.yml
-<<<<<<< HEAD
-*.clab.yml.annotations.json
-=======
-*.annotations.json
->>>>>>> fb4f79a (updated gitignor)
 
 # Python bytecode
 __pycache__/
