@@ -14,6 +14,7 @@ from acta.capacity import (
     validate_current_capacity,
 )
 from acta.config import load_config, save_config
+from acta.diagram import topology_to_dot, write_png
 from acta.mac import generate_mac
 from acta.portplan import PortPlan
 from acta.prompt import prompt_value
@@ -557,6 +558,8 @@ def run_create(project_dir: Path) -> Path:
         project_dir / f"topology-{serial_prefix}-{date.today().isoformat()}.yml"
     )
     output_path.write_text(topology, encoding="utf-8")
+    diagram_path = output_path.with_suffix(".png")
+    diagram_written = write_png(topology_to_dot(topology), diagram_path)
 
     config.update(
         {
@@ -577,4 +580,6 @@ def run_create(project_dir: Path) -> Path:
     )
     save_config(config_path, config)
     print(f"Wrote {output_path.name}")
+    if diagram_written:
+        print(f"Wrote {diagram_path.name}")
     return output_path

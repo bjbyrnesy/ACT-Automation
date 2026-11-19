@@ -10,6 +10,7 @@ from pathlib import Path
 
 from acta.capacity import Capacity, format_capacity_header, parse_capacity_header
 from acta.create import SITE_LETTERS, node_block
+from acta.diagram import topology_to_dot, write_png
 from acta.portplan import PortPlan
 from acta.topology import Connection, parse_connections, used_ports_from_connections
 
@@ -587,4 +588,5 @@ def extend_topology(
 
     output_path = _resolve_output(path, out, new)
     _write_atomic(output_path, updated_text, path.stat().st_mode & 0o777)
+    write_png(topology_to_dot(updated_text), output_path.with_suffix(".png"))
     return output_path

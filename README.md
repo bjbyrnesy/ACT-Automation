@@ -23,6 +23,23 @@ This is *not* a tool to build any possible iteration of a network topology in AC
 > [!NOTE]
 > This has been built & tested on a Mac, if running on a PC, follow the steps below.
 
+### Preview: acta create/extend (uv)
+
+The Python CLI preview can create a topology with reserved growth capacity and
+extend it later without moving existing link endpoints. The existing `.sh`
+workflows below remain supported while the rest of the CLI is migrated.
+
+```bash
+uv sync --extra dev
+uv run acta.py create
+uv run acta.py extend topology-demo-2026-11-19.yml --add leaf
+uv run acta.py extend topology-demo-2026-11-19.yml --add mleaf --pair 1
+```
+
+If Graphviz `dot` is available, create and extend also write or refresh the PNG
+beside the topology YAML. Run `uv run acta.py extend --help` for all growth
+options, including multi-site `--site` selection.
+
 ## MacOS Users 🍎
 If you don't have Brew installed, check this URL https://brew.sh/. 
 
