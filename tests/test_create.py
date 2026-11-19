@@ -3,9 +3,16 @@ from dataclasses import replace
 import pytest
 
 from acta.capacity import Capacity
-from acta.create import FabricSpec, emit_act_yaml
+from acta.create import FabricSpec, capacity_banner, emit_act_yaml
 from acta.mac import generate_mac
 from acta.topology import parse_connections
+
+
+def test_capacity_banner_mentions_extend_commands():
+    text = capacity_banner()
+    assert "acta.py extend" in text
+    assert "--add leaf" in text
+    assert "--add mleaf" in text
 
 
 def test_emit_includes_capacity_and_mesh_without_spare_links():

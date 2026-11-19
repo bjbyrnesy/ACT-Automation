@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import re
+import sys
 from dataclasses import dataclass
+from datetime import date
+from pathlib import Path
 
 from acta.capacity import (
     HARD_PORT_MAX,
@@ -8,8 +12,23 @@ from acta.capacity import (
     format_capacity_header,
     validate_create_capacity,
 )
+from acta.config import load_config, save_config
 from acta.mac import generate_mac
 from acta.portplan import PortPlan
+from acta.prompt import prompt_value
+
+DEFAULT_EOS_VERSION = "4.35.4M"
+_PREFIX_RE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
+
+
+def capacity_banner() -> str:
+    """Explain how reserved capacity supports later, non-disruptive growth."""
+    return (
+        "Reserve spare ports now so this topology can grow without moving existing "
+        "links.\n"
+        "Later, use acta.py extend --add leaf, acta.py extend --add spine, or\n"
+        "acta.py extend --add mleaf --pair N within the limits chosen below."
+    )
 
 
 @dataclass(frozen=True)
@@ -208,3 +227,182 @@ def emit_act_yaml(spec: FabricSpec) -> str:
                 )
 
     return "\n".join(lines) + "\n"
+
+
+def _prompt_int(label: str, default: int, minimum: int = 1) -> int:
+    while True:
+        value = prompt_value(label, str(default))
+        try:
+            number = int(value)
+        except ValueError:
+            print(f"  Enter a whole number of at least {minimum}.", file=sys.stderr)
+            continue
+        if number >= minimum:
+            return number
+        print(f"  Enter a whole number of at least {minimum}.", file=sys.stderr)
+
+
+def _prompt_yes_no(label: str, default: bool = False) -> bool:
+    default_text = "y" if default else "n"
+    while True:
+        value = prompt_value(label, default_text).casefold()
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        print("  Enter y or n.", file=sys.stderr)
+
+
+def _parse_member_pairs(value: str, pair_count: int) -> list[int]:
+    if not value.strip():
+        return []
+
+    pairs: list[int] = []
+    for item in value.split(","):
+        try:
+            pair = int(item.strip())
+        except ValueError as error:
+            raise ValueError(
+                "member leaf pairs must be comma-separated numbers"
+            ) from error
+        if pair < 1 or pair > pair_count:
+            raise ValueError(f"member leaf pair must be between 1 and {pair_count}")
+        if pair not in pairs:
+            pairs.append(pair)
+    return pairs
+
+
+def _configured_int(config: dict[str, str], key: str, default: int) -> int:
+    try:
+        return int(config.get(key, str(default)))
+    except ValueError:
+        return default
+
+
+def run_create(project_dir: Path) -> Path:
+    """Interactively collect a single-DC fabric spec and write its topology."""
+    if not sys.stdin.isatty():
+        raise RuntimeError("create requires an interactive terminal")
+
+    config_path = project_dir / ".config"
+    config = load_config(config_path)
+
+    print("Topology parameters:")
+    serial_prefix = prompt_value("Serial prefix")
+    hostname_prefix = prompt_value("Hostname prefix", serial_prefix)
+    if not serial_prefix.isalnum():
+        raise ValueError("serial prefix must be alphanumeric")
+    if _PREFIX_RE.fullmatch(hostname_prefix) is None:
+        raise ValueError(
+            "hostname prefix must be alphanumeric with optional internal dashes"
+        )
+
+    spines = _prompt_int(
+        "Number of spines",
+        _configured_int(config, "SPINE_COUNT", 2),
+    )
+    leaves = _prompt_int(
+        "Number of leaves",
+        _configured_int(config, "LEAF_COUNT", 4),
+    )
+
+    print()
+    print(capacity_banner())
+    max_spines = _prompt_int(
+        "Maximum spines",
+        max(spines, _configured_int(config, "MAX_SPINES", 4)),
+    )
+    max_leaves = _prompt_int(
+        "Maximum leaves",
+        max(leaves, _configured_int(config, "MAX_LEAVES", 8)),
+    )
+    max_mleafs_per_pair = _prompt_int(
+        "Maximum member leaves per leaf pair",
+        max(
+            2,
+            _configured_int(config, "MEMBER_LEAVES_PER_PAIR", 0),
+            _configured_int(config, "MAX_MLEAFS_PER_PAIR", 2),
+        ),
+        minimum=0,
+    )
+
+    mlag_pairs = _prompt_yes_no(
+        "Pair leaves into MLAG pairs (y/n)",
+        config.get("MLAG_PAIRS", "n").casefold() in {"y", "yes"},
+    )
+    spine_mlag = spines == 2 and _prompt_yes_no(
+        "Add MLAG peer-links between spines (y/n)",
+        default=True,
+    )
+
+    member_leaf_pairs: list[int] = []
+    member_leaves_per_pair = 0
+    if mlag_pairs and leaves >= 2 and max_mleafs_per_pair:
+        pair_count = leaves // 2
+        while True:
+            pair_text = prompt_value(
+                f"Leaf pairs receiving member leaves (1-{pair_count}, comma-separated)",
+                config.get("MEMBER_LEAF_PAIRS", ""),
+            )
+            try:
+                member_leaf_pairs = _parse_member_pairs(pair_text, pair_count)
+                break
+            except ValueError as error:
+                print(f"  {error}", file=sys.stderr)
+        if member_leaf_pairs:
+            member_leaves_per_pair = _prompt_int(
+                "Member leaves per selected pair",
+                max(
+                    1,
+                    _configured_int(config, "MEMBER_LEAVES_PER_PAIR", 2),
+                ),
+            )
+
+    eos_version = prompt_value(
+        "EOS version",
+        config.get("EOS_VERSION") or DEFAULT_EOS_VERSION,
+    )
+    capacity = Capacity(
+        fabric_mode=None,
+        max_spines=max_spines,
+        max_leaves=max_leaves,
+        max_mleafs_per_pair=max_mleafs_per_pair,
+        spines=spines,
+        leaves=leaves,
+    )
+    spec = FabricSpec(
+        hostname_prefix=hostname_prefix,
+        serial_prefix=serial_prefix,
+        eos_version=eos_version,
+        capacity=capacity,
+        mlag_pairs=mlag_pairs,
+        spine_mlag=spine_mlag,
+        member_leaf_pairs=member_leaf_pairs,
+        member_leaves_per_pair=member_leaves_per_pair,
+    )
+    topology = emit_act_yaml(spec)
+    output_path = (
+        project_dir / f"topology-{serial_prefix}-{date.today().isoformat()}.yml"
+    )
+    output_path.write_text(topology, encoding="utf-8")
+
+    config.update(
+        {
+            "DC_COUNT": "1",
+            "SPINE_COUNT": str(spines),
+            "LEAF_COUNT": str(leaves),
+            "MLAG_PAIRS": "y" if mlag_pairs else "n",
+            "EOS_VERSION": eos_version,
+            "MEMBER_LEAF_PAIRS": ",".join(map(str, member_leaf_pairs)),
+            "MEMBER_LEAVES_PER_PAIR": (
+                str(member_leaves_per_pair) if member_leaf_pairs else ""
+            ),
+            "FABRIC_MODE": "",
+            "MAX_SPINES": str(max_spines),
+            "MAX_LEAVES": str(max_leaves),
+            "MAX_MLEAFS_PER_PAIR": str(max_mleafs_per_pair),
+        }
+    )
+    save_config(config_path, config)
+    print(f"Wrote {output_path.name}")
+    return output_path

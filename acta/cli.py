@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+from acta.create import run_create
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,5 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "create":
+        try:
+            run_create(Path.cwd())
+        except (EOFError, RuntimeError, ValueError) as error:
+            print(f"ERROR: {error}", file=sys.stderr, flush=True)
+            return 2
+        return 0
     print(f"ERROR: command {args.command!r} not implemented yet", flush=True)
     return 2
