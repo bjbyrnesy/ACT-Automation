@@ -10,6 +10,7 @@ ACT Automation.code-workspace
 # Any topology files
 topology*
 *.yml
+*.annotations.json
 
 # Python bytecode
 __pycache__/
