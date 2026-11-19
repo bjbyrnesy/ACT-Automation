@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from acta.capacity import Capacity, format_capacity_header, validate_create_capacity
+from acta.capacity import (
+    HARD_PORT_MAX,
+    Capacity,
+    format_capacity_header,
+    validate_create_capacity,
+)
 from acta.mac import generate_mac
 from acta.portplan import PortPlan
 
@@ -42,6 +47,22 @@ def _validate_spec(spec: FabricSpec) -> None:
         raise ValueError("member_leaf_pairs must not contain duplicates")
     if any(pair < 1 or pair > pair_count for pair in spec.member_leaf_pairs):
         raise ValueError(f"member leaf pair must be between 1 and {pair_count}")
+
+    plan = PortPlan(spec.capacity)
+    service_ports: list[int] = []
+    if spec.mlag_pairs:
+        service_ports.extend(plan.leaf_mlag_ports())
+    if spec.member_leaf_pairs:
+        service_ports.extend(
+            plan.leaf_mleaf_port(slot)
+            for slot in range(1, spec.member_leaves_per_pair + 1)
+        )
+    if spec.spine_mlag:
+        service_ports.extend(plan.spine_mlag_ports())
+    if service_ports and max(service_ports) > HARD_PORT_MAX:
+        raise ValueError(
+            f"planned service ports exceed Ethernet{HARD_PORT_MAX} hard cap"
+        )
 
 
 def _node_lines(

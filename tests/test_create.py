@@ -90,3 +90,26 @@ def test_emit_rejects_multi_dc():
 
     with pytest.raises(ValueError, match="single-DC"):
         emit_act_yaml(replace(spec, dc_count=2))
+
+
+def test_emit_rejects_service_ports_above_hard_cap():
+    spec = FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity(
+            fabric_mode=None,
+            max_spines=16,
+            max_leaves=2,
+            max_mleafs_per_pair=0,
+            spines=2,
+            leaves=2,
+        ),
+        mlag_pairs=True,
+        spine_mlag=False,
+        member_leaf_pairs=[],
+        member_leaves_per_pair=0,
+    )
+
+    with pytest.raises(ValueError, match="16.*hard cap"):
+        emit_act_yaml(spec)
