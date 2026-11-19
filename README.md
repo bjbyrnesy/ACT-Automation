@@ -109,10 +109,14 @@ generator. First run `./generate.sh`, then convert its generated ACT YAML:
 
 Run the last two commands on the Linux lab host, or add `--host user@lab-host`
 to run them over SSH. The initiating machine needs Python 3 and Mike Farah
-`yq` v4. The Linux host needs containerlab, Docker, and the specified cEOS
-image already loaded or accessible. Remote access uses your SSH configuration
+`yq` v4. The Linux host needs containerlab, Docker or Podman, and the specified
+cEOS image already loaded in the selected runtime or accessible to it. Remote access uses your SSH configuration
 and noninteractive authentication; the host must allow passwordless `sudo` for
-containerlab and either Docker access or passwordless `sudo` for Docker.
+containerlab and access to the runtime or passwordless `sudo` for it.
+Use `--runtime docker` (the deployment default) or `--runtime podman` for
+deployment. Onboarding automatically finds the lab in accessible Docker and
+rootless or rootful Podman stores; use `--runtime` to restrict the search.
+Deploy the topology before onboarding it.
 Containerlab's default management network must have DNS and outbound access to
 the selected CVaaS endpoint on TCP 443.
 Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
@@ -166,7 +170,7 @@ This fixes an existing file; it does not change permissions on SSH private keys.
 
 Deployment saves the topology on the host at
 `~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
-`sudo containerlab destroy -t ~/.act-automation/clab/<lab-name>/topology.clab.yml`
+`sudo containerlab destroy --runtime docker -t ~/.act-automation/clab/<lab-name>/topology.clab.yml` (replace `docker` with `podman` if selected)
 on that host. Destroying the lab is separate from decommissioning its CVaaS
 devices. Re-run conversion with the same source identities and lab name to
 retain the same intended cEOS serials; changing the ACT serial prefix changes
@@ -207,6 +211,7 @@ Use `./clab.py --help` or `./clab.py <command> --help` for help.
 | `TOPOLOGY` | Required generated containerlab topology file. |
 | `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to deploy locally. |
 | `--mgmt-network NAME` | Override the management network for this deployment; the local topology file is not changed. |
+| `--runtime docker\|podman` | Container runtime for deployment; defaults to Docker. |
 | `-h`, `--help` | Show command help. |
 
 **Onboard:** `./clab.py onboard TOPOLOGY [options]`
@@ -216,6 +221,7 @@ Use `./clab.py --help` or `./clab.py <command> --help` for help.
 | `TOPOLOGY` | Required generated containerlab topology file. |
 | `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to onboard local containers. |
 | `--endpoint HOSTNAME` | CVaaS API hostname, such as `apiserver.arista.io`; prompts if omitted. |
+| `--runtime docker\|podman` | Restrict runtime discovery; defaults to automatic detection. |
 | `--disableaaa` / `--no-disableaaa` | Pass `-disableaaa` on the initial TerminAttr exec; default from `CLAB_DISABLEAAA`. |
 | `-h`, `--help` | Show command help. |
 
