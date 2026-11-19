@@ -476,6 +476,56 @@ links:
             self.assertIn("hostname demo-A-leaf1", run.call_args_list[0].args[3])
             self.assertIn("hostname legacy", run.call_args_list[1].args[3])
 
+    def test_deploy_passes_requested_runtime(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(clab.MARKER + json.dumps({"name": "demo", "topology": {"nodes": {"a": {"kind": "arista_ceos"}}}}))
+            args = clab.argparse.Namespace(topology=str(path), host="labhost", mgmt_network=None, runtime="podman")
+            with mock.patch.object(clab, "host_run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+                clab.deploy(args)
+            self.assertEqual(run.call_args.args[2], ["demo", "podman"])
+            self.assertIn('--runtime "$runtime"', clab.DEPLOY_SCRIPT)
+
+    def test_finds_lab_in_docker_when_podman_is_empty(self):
+        lab = {"name": "demo", "topology": {"nodes": {"a": {}, "b": {}}}}
+        def run(host, script, argv, data):
+            output = "clab-demo-a\nclab-demo-b\n" if argv == ["docker"] else ""
+            return subprocess.CompletedProcess([], 0, output, "")
+        with mock.patch.object(clab, "host_run", side_effect=run):
+            self.assertEqual(clab.check_onboarding_host("labhost", lab), "docker")
+
+    def test_finds_lab_in_rootful_podman(self):
+        lab = {"name": "demo", "topology": {"nodes": {"a": {}}}}
+        def run(host, script, argv, data):
+            output = "clab-demo-a\n" if argv == ["sudo-podman"] else ""
+            return subprocess.CompletedProcess([], 0, output, "")
+        with mock.patch.object(clab, "host_run", side_effect=run):
+            self.assertEqual(clab.check_onboarding_host("labhost", lab), "sudo-podman")
+
+    def test_local_runtime_scripts_keep_discovery_and_exec_on_docker(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            for name in ("docker", "podman"):
+                fake = root / name
+                fake.write_text("#!/bin/sh\n" + ("if [ \"$1\" = ps ]; then echo clab-demo-a; else echo docker-exec; fi\n" if name == "docker" else "exit 0\n"))
+                fake.chmod(0o755)
+            lab = {"name": "demo", "topology": {"nodes": {"a": {}}}}
+            with mock.patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}):
+                runtime = clab.check_onboarding_host(None, lab)
+                result = clab.host_run(None, clab.DOCKER_SCRIPT, ["clab-demo-a", runtime], "")
+            self.assertEqual(runtime, "docker")
+            self.assertEqual(result.stdout.strip(), "docker-exec")
+
+    def test_selected_runtime_is_used_for_readiness(self):
+        with mock.patch.object(clab, "host_run", return_value=subprocess.CompletedProcess([], 0, "ready", "")) as run:
+            self.assertTrue(clab.wait_for_eos(None, "clab-demo-a", attempts=1, runtime="sudo-podman"))
+        self.assertEqual(run.call_args.args[2], ["clab-demo-a", "sudo-podman"])
+
+    def test_node_commands_use_detected_runtime(self):
+        with mock.patch.object(clab, "wait_for_eos", return_value=True), mock.patch.object(clab, "host_run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+            clab.onboard_node("labhost", "clab-demo-a", "commands", runtime="docker")
+        self.assertEqual(run.call_args.args[2], ["clab-demo-a", "docker"])
+
     def test_onboard_fails_before_token_if_lab_is_on_another_host(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "lab.yml"

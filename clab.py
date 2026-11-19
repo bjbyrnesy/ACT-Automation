@@ -341,33 +341,35 @@ def generate(args):
 
 DEPLOY_SCRIPT = r"""set -eu
 name=$1
+runtime=${2:-docker}
 dir="$HOME/.act-automation/clab/$name"
 mkdir -p "$dir"
 (umask 077; cat > "$dir/topology.clab.yml")
 if [ "$(id -u)" -eq 0 ]; then
-  containerlab deploy -t "$dir/topology.clab.yml"
+  containerlab deploy -t "$dir/topology.clab.yml" --runtime "$runtime"
 else
-  sudo -n containerlab deploy -t "$dir/topology.clab.yml"
+  sudo -n containerlab deploy -t "$dir/topology.clab.yml" --runtime "$runtime"
 fi
 """
-# Prefer Podman; fall back to Docker CLI only when Podman is unavailable.
+# Keep the container runtime and privilege context consistent from discovery
+# through every node command. Rootful and rootless Podman have separate stores.
 DOCKER_LIST_SCRIPT = r"""set -eu
-if podman info >/dev/null 2>&1; then
-  exec podman ps --format '{{.Names}}'
-elif docker info >/dev/null 2>&1; then
-  exec docker ps --format '{{.Names}}'
-else
-  exec sudo -n podman ps --format '{{.Names}}'
-fi
+case "$1" in
+  docker) exec docker ps --format '{{.Names}}' ;;
+  podman) exec podman ps --format '{{.Names}}' ;;
+  sudo-podman) exec sudo -n podman ps --format '{{.Names}}' ;;
+  sudo-docker) exec sudo -n docker ps --format '{{.Names}}' ;;
+  *) exit 2 ;;
+esac
 """
 DOCKER_SCRIPT = r"""set -eu
-if podman info >/dev/null 2>&1; then
-  exec podman exec -i "$1" Cli -p 15
-elif docker info >/dev/null 2>&1; then
-  exec docker exec -i "$1" Cli -p 15
-else
-  exec sudo -n podman exec -i "$1" Cli -p 15
-fi
+case "${2:-docker}" in
+  docker) exec docker exec -i "$1" Cli -p 15 ;;
+  podman) exec podman exec -i "$1" Cli -p 15 ;;
+  sudo-podman) exec sudo -n podman exec -i "$1" Cli -p 15 ;;
+  sudo-docker) exec sudo -n docker exec -i "$1" Cli -p 15 ;;
+  *) exit 2 ;;
+esac
 """
 
 CLI_ERROR = re.compile(r"(?im)^\s*%\s*(?:error|invalid|incomplete|ambiguous)")
@@ -393,7 +395,7 @@ def deploy(args):
             fail("Invalid management network configuration.")
         mgmt["network"] = network
         content = MARKER + json.dumps(lab, indent=2) + "\n"
-    result = host_run(args.host, DEPLOY_SCRIPT, [lab["name"]], content)
+    result = host_run(args.host, DEPLOY_SCRIPT, [lab["name"], getattr(args, "runtime", None) or "docker"], content)
     if result.stdout:
         print(result.stdout, end="")
     if result.returncode:
@@ -403,50 +405,60 @@ def deploy(args):
     print(f"Deployed {lab['name']}.")
 
 
-def check_onboarding_host(host, lab):
-    result = host_run(host, DOCKER_LIST_SCRIPT, [], "")
+def check_onboarding_host(host, lab, runtime=None):
     hint = " Use --host user@lab-host if your lab runs remotely." if not host else ""
-    if result.returncode:
-        detail = result.stderr.strip() or "Podman/Docker is unavailable."
-        fail(
-            f'Cannot inspect containers on {host or "the local machine"}: {detail}.{hint}'
-        )
-    running = set(result.stdout.splitlines())
     expected = {f"clab-{lab['name']}-{node}" for node in lab["topology"]["nodes"]}
+    candidates = {"docker": ("docker", "sudo-docker"),
+                  "podman": ("podman", "sudo-podman")}.get(
+                      runtime, ("docker", "podman", "sudo-podman", "sudo-docker"))
+    accessible = []
+    errors = []
+    for candidate in candidates:
+        result = host_run(host, DOCKER_LIST_SCRIPT, [candidate], "")
+        if result.returncode:
+            if result.stderr.strip():
+                errors.append(result.stderr.strip())
+            continue
+        running = set(result.stdout.splitlines())
+        if expected <= running:
+            return candidate
+        accessible.append((len(expected & running), candidate, running))
+    if not accessible:
+        detail = errors[0] if errors else "Podman/Docker is unavailable."
+        fail(f'Cannot inspect containers on {host or "the local machine"}: {detail}.{hint}')
+    _, candidate, running = max(accessible, key=lambda item: item[0])
     missing = sorted(expected - running)
-    if missing:
-        sample = ", ".join(missing[:5])
-        more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
-        fail(
-            f"Missing {len(missing)}/{len(expected)} container(s) for lab {lab['name']} "
-            f"on {host or 'the local machine'}: {sample}{more}.{hint}"
-        )
+    sample = ", ".join(missing[:5])
+    more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
+    fail(f"Missing {len(missing)}/{len(expected)} container(s) for lab {lab['name']} "
+         f"on {host or 'the local machine'} ({candidate}): {sample}{more}. "
+         f"Deploy the topology on this host first.{hint}")
 
 
-def wait_for_eos(host, container, attempts=30, delay=2.0):
+def wait_for_eos(host, container, attempts=30, delay=2.0, runtime="docker"):
     """Return True when Cli accepts enable/show version."""
     for _ in range(attempts):
-        result = host_run(host, DOCKER_SCRIPT, [container], "enable\nshow version\n")
+        result = host_run(host, DOCKER_SCRIPT, [container, runtime], "enable\nshow version\n")
         if result.returncode == 0 and not CLI_ERROR.search(result.stdout or ""):
             return True
         time.sleep(delay)
     return False
 
 
-def onboard_node(host, container, commands, attempts=5, delay=3.0):
+def onboard_node(host, container, commands, attempts=5, delay=3.0, runtime="docker"):
     """Push TerminAttr config with retries for slow cEOS boot."""
     last = None
     for attempt in range(attempts):
         if attempt:
             time.sleep(delay)
         if not wait_for_eos(
-            host, container, attempts=1 if attempt else 15, delay=delay
+            host, container, attempts=1 if attempt else 15, delay=delay, runtime=runtime
         ):
             last = subprocess.CompletedProcess(
                 [], 1, "", f"EOS not ready in {container}"
             )
             continue
-        result = host_run(host, DOCKER_SCRIPT, [container], commands)
+        result = host_run(host, DOCKER_SCRIPT, [container, runtime], commands)
         last = result
         if result.returncode == 0 and not CLI_ERROR.search(result.stdout or ""):
             return result
@@ -455,7 +467,7 @@ def onboard_node(host, container, commands, attempts=5, delay=3.0):
 
 def onboard(args):
     lab = validate_lab(Path(args.topology))
-    check_onboarding_host(args.host, lab)
+    runtime = check_onboarding_host(args.host, lab, getattr(args, "runtime", None))
     config = args.config if getattr(args, "config", None) is not None else read_config()
     endpoint = (
         args.endpoint
@@ -512,7 +524,7 @@ def onboard(args):
             "   shutdown\n   no shutdown\nend\nwrite memory\n"
         )
         node_commands = node_commands.replace(" -taillogs", vrf_flag + " -taillogs")
-        result = onboard_node(args.host, container, node_commands)
+        result = onboard_node(args.host, container, node_commands, runtime=runtime)
         if result is None or result.returncode or CLI_ERROR.search(result.stdout or ""):
             failures.append(node)
             detail = ""
@@ -600,6 +612,9 @@ def main(argv=None):
             default=config.get("CLAB_HOST") or None,
             help="SSH alias or user@host (default: CLAB_HOST from .config; omit to run locally)",
         )
+        action.add_argument("--runtime", choices=("docker", "podman"),
+                            default="docker" if command == "deploy" else None,
+                            help="Container runtime (deploy defaults to docker; onboarding auto-detects)")
         if command == "deploy":
             action.add_argument(
                 "--mgmt-network",
