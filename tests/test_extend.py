@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acta.capacity import Capacity
+from acta.capacity import Capacity, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
 from acta.extend import extend_topology
 from acta.topology import parse_connections
@@ -42,6 +42,12 @@ def test_add_leaf_preserves_existing_endpoints(tmp_path: Path):
         for connection in after_connections
     }
     assert before <= after
-    assert any(
-        "leaf3" in f"{a_node}{b_node}" for a_node, _, b_node, _ in after - before
-    )
+    assert {
+        endpoint
+        for endpoint in after - before
+        if "demo-leaf3" in (endpoint[0], endpoint[2])
+    } == {
+        ("demo-spine1", 3, "demo-leaf3", 1),
+        ("demo-spine2", 3, "demo-leaf3", 2),
+    }
+    assert parse_capacity_header(path.read_text()).leaves == 3
