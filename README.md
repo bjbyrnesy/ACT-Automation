@@ -118,18 +118,26 @@ the selected CVaaS endpoint on TCP 443.
 Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
 TerminAttr through that VRF. Existing topology files must be regenerated to
 include the setting. Containerlab runs a post-deployment EOS command to configure
-and save DNS servers in `MGMT`. Use `--name-servers 10.0.0.53 10.0.0.54`
-when generating to replace the defaults; regenerate and redeploy existing labs
-to apply the setting.
+ensure `vrf instance MGMT`, then save DNS/NTP as `ip name-server vrf MGMT …`
+and `ntp server vrf MGMT …`. Defaults come from `CLAB_DNS` / `CLAB_NTP` in
+`.config`, or `--name-servers` / `--ntp-servers` on the CLI. Onboard repeats
+those VRF-scoped DNS/NTP lines when the node has `CLAB_MGMT_VRF`. Regenerate
+and redeploy existing labs to apply generate-time changes.
 
 Container names are `clab-<lab-name>-<node>`. Keep `--name` short. A leading
 `clab-` on ACT hostnames is stripped during conversion so you get
 `clab-campus-A-mleaf1` instead of `clab-2site-campus-clab-A-mleaf1`.
+When ACT nodes already include the lab prefix (`blz-B-leaf2`), the container
+node key is shortened (`B-leaf2`) but EOS/CVaaS hostname keeps the full ACT
+name (`blz-B-leaf2`) via generate exec and onboard.
 
 `clab.py` reads optional defaults from `.config` in the current directory (same
 file as the shell scripts). CLI flags override. Useful keys: `CLAB_NAME`,
 `CLAB_IMAGE` (or `EOS_VERSION` → `ceos:$EOS_VERSION`), `CLAB_HOST`,
-`CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CVAAS_HOST`, `CVAAS_TOKEN`.
+`CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CLAB_DNS` (space-separated IPs),
+`CLAB_NTP` (space-separated IPs), `CLAB_DISABLEAAA` (`y`/`n` — adds
+`-disableaaa` to the initial TerminAttr onboarding exec), `CVAAS_HOST`,
+`CVAAS_TOKEN`.
 
 Generated labs use `172.100.100.0/22` on containerlab's default management
 network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
@@ -188,7 +196,8 @@ Use `./clab.py --help` or `./clab.py <command> --help` for help.
 | `--output FILE` | Output path; defaults to `<name>.clab.yml` in the current directory. |
 | `--mgmt-subnet CIDR` | IPv4 management subnet; defaults to `172.100.100.0/22`. |
 | `--mgmt-network NAME` | Docker management network name; defaults to containerlab's `clab` network. |
-| `--name-servers IP [IP ...]` | IPv4 DNS servers configured in the `MGMT` VRF; defaults to `8.8.8.8 1.1.1.1`. |
+| `--name-servers IP [IP ...]` | IPv4 DNS servers in `MGMT`; default `CLAB_DNS` or `8.8.8.8 1.1.1.1`. |
+| `--ntp-servers IP [IP ...]` | IPv4 NTP servers in `MGMT`; default `CLAB_NTP` (omit if unset). |
 | `-h`, `--help` | Show command help. |
 
 **Deploy:** `./clab.py deploy TOPOLOGY [options]`
@@ -207,6 +216,7 @@ Use `./clab.py --help` or `./clab.py <command> --help` for help.
 | `TOPOLOGY` | Required generated containerlab topology file. |
 | `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to onboard local containers. |
 | `--endpoint HOSTNAME` | CVaaS API hostname, such as `apiserver.arista.io`; prompts if omitted. |
+| `--disableaaa` / `--no-disableaaa` | Pass `-disableaaa` on the initial TerminAttr exec; default from `CLAB_DISABLEAAA`. |
 | `-h`, `--help` | Show command help. |
 
 For example, to onboard a lab on a remote host:

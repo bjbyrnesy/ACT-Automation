@@ -96,6 +96,15 @@ validate_cvaas_token() {
         return 1
     fi
 
+    local dst
+    dst=$(jq -r '.dst // empty' <<< "${decoded}" 2>/dev/null)
+    if [[ "${dst}" == "account" ]]; then
+        echo "ERROR: CVAAS_TOKEN is a user/service-account API token (dst=account)," >&2
+        echo "       not a device enrollment token. TerminAttr will reject it." >&2
+        echo "       Generate one: CVaaS UI → Devices → Device Registration → Generate a Token" >&2
+        return 1
+    fi
+
     local exp
     exp=$(jq -r '.exp // empty' <<< "${decoded}" 2>/dev/null)
     if [[ -z "${exp}" ]]; then
