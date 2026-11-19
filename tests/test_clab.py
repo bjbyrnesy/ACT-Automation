@@ -773,8 +773,28 @@ links:
             "ceos:custom",
         )
 
-    def test_onboard_uses_cvaas_token_from_config(self):
+    def test_valid_cached_token_does_not_prompt(self):
         token = enrollment_jwt()
+        with mock.patch.object(clab.getpass, "getpass") as prompt:
+            self.assertEqual(clab.enrollment_token({"CVAAS_TOKEN": token}), token)
+        prompt.assert_not_called()
+
+    def test_expired_cached_token_prompts_for_fresh_token(self):
+        expired = enrollment_jwt(exp=int(time.time()) - 10)
+        fresh = enrollment_jwt()
+        with mock.patch.object(clab.getpass, "getpass", return_value=fresh) as prompt:
+            self.assertEqual(clab.enrollment_token({"CVAAS_TOKEN": expired}), fresh)
+        prompt.assert_called_once_with("CVaaS enrollment token: ")
+
+    def test_missing_cached_token_prompts(self):
+        fresh = enrollment_jwt()
+        with mock.patch.object(clab.getpass, "getpass", return_value=fresh) as prompt:
+            self.assertEqual(clab.enrollment_token({}), fresh)
+        prompt.assert_called_once()
+
+    def test_onboard_prompts_when_cached_token_is_invalid(self):
+        token = enrollment_jwt()
+        cached_token = enrollment_jwt(dst="account")
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "lab.yml"
             path.write_text(
@@ -792,7 +812,7 @@ links:
                 endpoint=None,
                 config={
                     "CVAAS_HOST": "apiserver.example.com",
-                    "CVAAS_TOKEN": token,
+                    "CVAAS_TOKEN": cached_token,
                 },
             )
             with mock.patch.object(clab, "check_onboarding_host"), mock.patch.object(
@@ -802,12 +822,13 @@ links:
                 "host_run",
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
             ) as run, mock.patch.object(
-                clab.getpass, "getpass"
+                clab.getpass, "getpass", return_value=token
             ) as prompt, mock.patch(
                 "builtins.input", return_value="y"
             ):
                 clab.onboard(args)
-            prompt.assert_not_called()
+            prompt.assert_called_once_with("CVaaS enrollment token: ")
+            self.assertIn(base64.b64encode(token.encode()).decode(), run.call_args.args[3])
             self.assertIn("-cvaddr=apiserver.example.com:443", run.call_args.args[3])
             self.assertNotIn(token, run.call_args.args[3])
             self.assertNotIn("-disableaaa", run.call_args.args[3])
@@ -844,7 +865,9 @@ links:
                 clab,
                 "host_run",
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
-            ) as run, mock.patch(
+            ) as run, mock.patch.object(
+                clab.getpass, "getpass", return_value=token
+            ), mock.patch(
                 "builtins.input", return_value="y"
             ):
                 clab.onboard(args)
@@ -888,7 +911,7 @@ links:
             )
             with mock.patch.object(clab, "check_onboarding_host"), mock.patch.object(
                 clab, "host_run"
-            ) as run, mock.patch("builtins.input") as confirm:
+            ) as run, mock.patch.object(clab.getpass, "getpass", return_value=bad), mock.patch("builtins.input") as confirm:
                 with self.assertRaisesRegex(ValueError, "dst=account"):
                     clab.onboard(args)
             confirm.assert_not_called()
