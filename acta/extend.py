@@ -16,10 +16,10 @@ from acta.topology import Connection, parse_connections, used_ports_from_connect
 _CAPACITY_LINE_RE = re.compile(r"^#\s*capacity:.*$", re.MULTILINE)
 _NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
 _FABRIC_NODE_RE = re.compile(
-    r"^(?P<prefix>.+)-(?P<role>spine|leaf)(?P<index>[1-9]\d*)$"
+    r"^(?P<prefix>.+)-(?P<role>spine|leaf|mleaf)(?P<index>[1-9]\d*)$"
 )
 _SERIAL_RE = re.compile(
-    r"^[ \t]+serial_number:\s*(?P<prefix>\S+)-(?:spine|leaf)[1-9]\d*\s*$",
+    r"^[ \t]+serial_number:\s*(?P<prefix>\S+)-(?:spine|leaf|mleaf)[1-9]\d*\s*$",
     re.MULTILINE,
 )
 _LINKS_RE = re.compile(r"^links:\s*$", re.MULTILINE)
@@ -67,14 +67,16 @@ def _replace_capacity(text: str, capacity: Capacity) -> str:
 def _node_yaml(
     hostname_prefix: str,
     serial_prefix: str,
-    leaf_index: int,
+    role: str,
+    index: int,
 ) -> str:
-    identity = f"leaf{leaf_index}"
+    address_base = {"spine": 10, "leaf": 20, "mleaf": 130}[role]
+    identity = f"{role}{index}"
     return "\n".join(
         [
             f"  - {hostname_prefix}-{identity}:",
             "      node_type: veos",
-            f"      ip_addr: 192.168.0.{20 + leaf_index}/24",
+            f"      ip_addr: 192.168.0.{address_base + index}/24",
             f"      serial_number: {serial_prefix}-{identity}",
             f"      system_mac_address: {generate_mac(serial_prefix, identity)}",
             "      ztp: false",
@@ -148,6 +150,100 @@ def _resolve_output(path: Path, out: Path | None, new: bool) -> Path:
     return path
 
 
+def _warn_soft_capacity(identity: str, field: str, maximum: int) -> None:
+    warnings.warn(
+        f"{identity} exceeds planned soft capacity {field}={maximum}; "
+        "continuing with available ports",
+        stacklevel=3,
+    )
+
+
+def _allocate_port(
+    plan: PortPlan,
+    used: set[int],
+    preferred: int,
+    node: str,
+) -> int:
+    port = plan.next_free_port(used, preferred)
+    if port != preferred:
+        warnings.warn(
+            f"{node}:Ethernet{preferred} is unavailable; using Ethernet{port}",
+            stacklevel=3,
+        )
+    return port
+
+
+def _leaf_mesh_connections(
+    plan: PortPlan,
+    connections: list[Connection],
+    spines: list[tuple[int, str, str]],
+    leaf_name: str,
+    leaf_index: int,
+) -> list[Connection]:
+    new_connections: list[Connection] = []
+    leaf_used: set[int] = set()
+    for spine_index, spine_name, _ in spines:
+        spine_port = _allocate_port(
+            plan,
+            used_ports_from_connections(connections, spine_name),
+            plan.spine_to_leaf_port(leaf_index),
+            spine_name,
+        )
+        leaf_port = _allocate_port(
+            plan,
+            leaf_used,
+            plan.leaf_to_spine_port(spine_index),
+            leaf_name,
+        )
+        new_connections.append(Connection(spine_name, spine_port, leaf_name, leaf_port))
+        leaf_used.add(leaf_port)
+        connections.append(new_connections[-1])
+    return new_connections
+
+
+def _spine_mesh_connections(
+    plan: PortPlan,
+    connections: list[Connection],
+    leaves: list[tuple[int, str, str]],
+    spine_name: str,
+    spine_index: int,
+) -> list[Connection]:
+    new_connections: list[Connection] = []
+    spine_used: set[int] = set()
+    for leaf_index, leaf_name, _ in leaves:
+        spine_port = _allocate_port(
+            plan,
+            spine_used,
+            plan.spine_to_leaf_port(leaf_index),
+            spine_name,
+        )
+        leaf_port = _allocate_port(
+            plan,
+            used_ports_from_connections(connections, leaf_name),
+            plan.leaf_to_spine_port(spine_index),
+            leaf_name,
+        )
+        new_connections.append(Connection(spine_name, spine_port, leaf_name, leaf_port))
+        spine_used.add(spine_port)
+        connections.append(new_connections[-1])
+    return new_connections
+
+
+def _mleafs_for_pair(
+    connections: list[Connection],
+    odd_leaf_name: str,
+    even_leaf_name: str,
+) -> set[str]:
+    pair_leaves = {odd_leaf_name, even_leaf_name}
+    member_leaves: set[str] = set()
+    for connection in connections:
+        endpoints = {connection.a_node, connection.b_node}
+        for endpoint in endpoints:
+            if "-mleaf" in endpoint and endpoints & pair_leaves:
+                member_leaves.add(endpoint)
+    return member_leaves
+
+
 def extend_topology(
     path: Path,
     add: str,
@@ -159,20 +255,25 @@ def extend_topology(
     new: bool = False,
 ) -> Path:
     """Extend an ACT topology without changing existing link endpoints."""
-    del site, pair
-    if add != "leaf":
-        raise NotImplementedError(f"extending with {add!r} is not implemented")
+    del site
+    if add not in {"leaf", "spine", "pair", "mleaf"}:
+        raise ValueError(f"unsupported extension type: {add!r}")
     if count < 1:
         raise ValueError("count must be at least 1")
+    if add == "mleaf" and pair is None:
+        raise ValueError("mleaf extension requires pair")
+    if pair is not None and pair < 1:
+        raise ValueError("pair must be at least 1")
 
     text = path.read_text(encoding="utf-8")
     capacity = parse_capacity_header(text)
     original_connections = parse_connections(text)
     spines = _fabric_nodes(text, "spine")
     leaves = _fabric_nodes(text, "leaf")
+    mleafs = _fabric_nodes(text, "mleaf")
     if not spines:
         raise ValueError("topology has no spine nodes")
-    hostname_prefixes = {prefix for _, _, prefix in [*spines, *leaves]}
+    hostname_prefixes = {prefix for _, _, prefix in [*spines, *leaves, *mleafs]}
     if len(hostname_prefixes) != 1:
         raise ValueError("topology fabric node prefixes are inconsistent")
     serial_match = _SERIAL_RE.search(text)
@@ -181,47 +282,141 @@ def extend_topology(
 
     hostname_prefix = hostname_prefixes.pop()
     serial_prefix = serial_match.group("prefix")
-    next_leaf = max([capacity.leaves, *(index for index, _, _ in leaves)]) + 1
     plan = PortPlan(capacity)
     connections = list(original_connections)
     updated_text = text
+    leaves_added = 0
+    spines_added = 0
 
-    for leaf_index in range(next_leaf, next_leaf + count):
-        if leaf_index > capacity.max_leaves:
-            warnings.warn(
-                f"leaf{leaf_index} exceeds planned soft capacity "
-                f"max_leaves={capacity.max_leaves}; continuing with available ports",
-                stacklevel=2,
-            )
-        leaf_name = f"{hostname_prefix}-leaf{leaf_index}"
-        new_connections: list[Connection] = []
-        leaf_used: set[int] = set()
-        for spine_index, spine_name, _ in spines:
-            preferred_spine_port = plan.spine_to_leaf_port(leaf_index)
-            spine_used = used_ports_from_connections(connections, spine_name)
-            spine_port = plan.next_free_port(spine_used, preferred_spine_port)
-            leaf_port = plan.next_free_port(
-                leaf_used,
-                plan.leaf_to_spine_port(spine_index),
-            )
-            if spine_port != preferred_spine_port:
-                warnings.warn(
-                    f"{spine_name}:Ethernet{preferred_spine_port} is unavailable; "
-                    f"using Ethernet{spine_port}",
-                    stacklevel=2,
+    if add in {"leaf", "pair"}:
+        leaves_to_add = count if add == "leaf" else count * 2
+        next_leaf = max([capacity.leaves, *(item[0] for item in leaves)]) + 1
+        added_leaf_names: list[str] = []
+        for leaf_index in range(next_leaf, next_leaf + leaves_to_add):
+            if leaf_index > capacity.max_leaves:
+                _warn_soft_capacity(
+                    f"leaf{leaf_index}", "max_leaves", capacity.max_leaves
                 )
-            new_connections.append(
-                Connection(spine_name, spine_port, leaf_name, leaf_port)
+            leaf_name = f"{hostname_prefix}-leaf{leaf_index}"
+            new_connections = _leaf_mesh_connections(
+                plan,
+                connections,
+                spines,
+                leaf_name,
+                leaf_index,
             )
-            leaf_used.add(leaf_port)
-        updated_text = _insert_node(
-            updated_text,
-            _node_yaml(hostname_prefix, serial_prefix, leaf_index),
-        )
-        updated_text = _append_connections(updated_text, new_connections)
-        connections.extend(new_connections)
+            updated_text = _insert_node(
+                updated_text,
+                _node_yaml(hostname_prefix, serial_prefix, "leaf", leaf_index),
+            )
+            updated_text = _append_connections(updated_text, new_connections)
+            added_leaf_names.append(leaf_name)
+            leaves_added += 1
 
-    updated_capacity = replace(capacity, leaves=capacity.leaves + count)
+        if add == "pair":
+            mlag_ports = plan.leaf_mlag_ports()
+            for pair_offset in range(0, len(added_leaf_names), 2):
+                odd_name, even_name = added_leaf_names[pair_offset : pair_offset + 2]
+                peer_connections: list[Connection] = []
+                for preferred in mlag_ports:
+                    odd_port = _allocate_port(
+                        plan,
+                        used_ports_from_connections(connections, odd_name),
+                        preferred,
+                        odd_name,
+                    )
+                    even_port = _allocate_port(
+                        plan,
+                        used_ports_from_connections(connections, even_name),
+                        preferred,
+                        even_name,
+                    )
+                    connection = Connection(
+                        odd_name,
+                        odd_port,
+                        even_name,
+                        even_port,
+                    )
+                    peer_connections.append(connection)
+                    connections.append(connection)
+                updated_text = _append_connections(updated_text, peer_connections)
+
+    elif add == "spine":
+        if capacity.fabric_mode == "l2" and capacity.spines >= 2:
+            raise ValueError("L2 fabrics cannot have more than 2 spines")
+        next_spine = max([capacity.spines, *(item[0] for item in spines)]) + 1
+        if capacity.fabric_mode == "l2" and next_spine + count - 1 > 2:
+            raise ValueError("L2 fabrics cannot have more than 2 spines")
+        for spine_index in range(next_spine, next_spine + count):
+            if spine_index > capacity.max_spines:
+                _warn_soft_capacity(
+                    f"spine{spine_index}", "max_spines", capacity.max_spines
+                )
+            spine_name = f"{hostname_prefix}-spine{spine_index}"
+            new_connections = _spine_mesh_connections(
+                plan,
+                connections,
+                leaves,
+                spine_name,
+                spine_index,
+            )
+            updated_text = _insert_node(
+                updated_text,
+                _node_yaml(hostname_prefix, serial_prefix, "spine", spine_index),
+            )
+            updated_text = _append_connections(updated_text, new_connections)
+            spines_added += 1
+
+    else:
+        assert pair is not None
+        odd_leaf_index = pair * 2 - 1
+        even_leaf_index = pair * 2
+        leaf_names = {index: name for index, name, _ in leaves}
+        if odd_leaf_index not in leaf_names or even_leaf_index not in leaf_names:
+            raise ValueError(f"leaf pair {pair} does not exist")
+        odd_name = leaf_names[odd_leaf_index]
+        even_name = leaf_names[even_leaf_index]
+        next_slot = len(_mleafs_for_pair(connections, odd_name, even_name)) + 1
+        next_mleaf = max([0, *(item[0] for item in mleafs)]) + 1
+        for offset in range(count):
+            slot = next_slot + offset
+            if slot > capacity.max_mleafs_per_pair:
+                _warn_soft_capacity(
+                    f"mleaf slot {slot}",
+                    "max_mleafs_per_pair",
+                    capacity.max_mleafs_per_pair,
+                )
+            mleaf_index = next_mleaf + offset
+            mleaf_name = f"{hostname_prefix}-mleaf{mleaf_index}"
+            preferred_leaf_port = plan.leaf_mleaf_port(slot)
+            odd_port = _allocate_port(
+                plan,
+                used_ports_from_connections(connections, odd_name),
+                preferred_leaf_port,
+                odd_name,
+            )
+            even_port = _allocate_port(
+                plan,
+                used_ports_from_connections(connections, even_name),
+                preferred_leaf_port,
+                even_name,
+            )
+            mleaf_connections = [
+                Connection(mleaf_name, 1, odd_name, odd_port),
+                Connection(mleaf_name, 2, even_name, even_port),
+            ]
+            updated_text = _insert_node(
+                updated_text,
+                _node_yaml(hostname_prefix, serial_prefix, "mleaf", mleaf_index),
+            )
+            updated_text = _append_connections(updated_text, mleaf_connections)
+            connections.extend(mleaf_connections)
+
+    updated_capacity = replace(
+        capacity,
+        leaves=capacity.leaves + leaves_added,
+        spines=capacity.spines + spines_added,
+    )
     updated_text = _replace_capacity(updated_text, updated_capacity)
     before = {
         (connection.a_node, connection.a_port, connection.b_node, connection.b_port)
