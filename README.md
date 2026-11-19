@@ -145,7 +145,8 @@ name (`blz-B-leaf2`) via generate exec and onboard.
 `clab.py` reads optional defaults from `.config` in the current directory (same
 file as the shell scripts). CLI flags override. Useful keys: `CLAB_NAME`,
 `CLAB_IMAGE` (or `EOS_VERSION` → `ceos:$EOS_VERSION`), `CLAB_HOST`,
-`CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CLAB_DNS` (space-separated IPs),
+`CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CLAB_MGMT_GATEWAY`,
+`CLAB_MGMT_RANGE`, `CLAB_MGMT_BRIDGE`, `CLAB_MGMT_MTU`, `CLAB_DNS` (space-separated IPs),
 `CLAB_NTP` (space-separated IPs), `CLAB_DISABLEAAA` (`y`/`n` — adds
 `-disableaaa` to the initial TerminAttr onboarding exec), `CVAAS_HOST`,
 `CVAAS_TOKEN`. Containerlab onboarding uses a valid cached enrollment token and
@@ -153,8 +154,28 @@ prompts if it is missing, expired, or invalid. A newly entered token is used
 for that run and is not written to `.config`.
 
 Generated labs use `172.100.100.0/22` on containerlab's default management
-network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
-if the subnet already belongs to another Docker network, select that network
+network unless `--mgmt-subnet` is provided. Nodes receive sequential static
+management addresses in topology order, skipping the gateway. Set an optional
+allocation range, gateway, bridge, and MTU using the arguments below; for example:
+
+```bash
+./clab.py generate topology-rclark-2026-09-15.yml --name dc-demo --image ceos:4.35.3F \
+  --mgmt-subnet 172.16.16.0/23 --mgmt-gateway 172.16.17.254 \
+  --mgmt-range 172.16.17.0/24 --mgmt-bridge mgmt-br0 --mgmt-mtu 1500
+```
+
+Generated YAML uses `et` links with `INTFTYPE: et`. Beside it, the generator
+creates `configs/base-config.eos` and per-node `configs/SN/*.eos` identity files;
+keep them with the topology. The base configuration follows containerlab's cEOS
+template and uses its default `admin` / `admin` login; change it before deploying
+to a shared network. Deployment copies the required files to the lab host and
+refuses to overwrite conflicting files. Existing local startup configuration and
+serial files are preserved, and conflicting serial identities stop generation.
+Use separate output directories for labs with differently configured nodes.
+
+Static addresses may change when topology node order changes. Reserve the chosen
+addresses on the management network and avoid overlap with other labs. If the
+subnet already belongs to another Docker network, select that network
 with `--mgmt-network` when generating. For an existing generated file, select
 it for deployment without editing the file:
 
@@ -162,7 +183,9 @@ it for deployment without editing the file:
 ./clab.py deploy --host user@lab-host --mgmt-network mgmt rclark-lab.clab.yml
 ```
 
-The named network must have the configured subnet. This option changes the copy
+The named network must have the configured subnet. Specify its actual gateway
+with `--mgmt-gateway` if it differs from the subnet’s first usable address, which
+the generator reserves by default. This option changes the copy
 of the topology stored on the host, not the local file; use it on each deployment.
 Containerlab's other management network requirements still apply.
 
@@ -184,13 +207,14 @@ on that host. Destroying the lab is separate from decommissioning its CVaaS
 devices. Re-run conversion with the same source identities and lab name to
 retain the same intended cEOS serials; changing the ACT serial prefix changes
 them. The generated serials are separate from ACT serials. The workflow sets
-`CEOS_SERIAL_NUMBER`, but persistence depends on the cEOS image: verify the
-reported serial before and after redeployment on your host before relying on
-CVaaS identity continuity. Avoid running multiple labs with the same source
+`CEOS_SERIAL_NUMBER` and binds a per-node `ceos-config` with a deterministic
+serial and system MAC. Verify the identity before and after redeployment on
+your host before relying on CVaaS identity continuity; older generated labs may
+have used a different system MAC. Avoid running multiple labs with the same source
 serials simultaneously.
 
-Onboarding supports generated containerlab files and prompts for a token each
-run. It submits the TerminAttr configuration to each cEOS container and reports
+Onboarding supports generated containerlab files and prompts for a token if no
+valid cached token is available. It submits the TerminAttr configuration to each cEOS container and reports
 individual failures; check CVaaS Inventory to confirm registration. Retry after
 nodes finish booting if they are not yet ready. As with the ACT workflow, a
 copy of the enrollment token is placed on each device for TerminAttr.
@@ -208,6 +232,10 @@ Use `./clab.py --help` or `./clab.py <command> --help` for help.
 | `--image IMAGE` | Required cEOS image name and tag available on the lab host. |
 | `--output FILE` | Output path; defaults to `<name>.clab.yml` in the current directory. |
 | `--mgmt-subnet CIDR` | IPv4 management subnet; defaults to `172.100.100.0/22`. |
+| `--mgmt-gateway IP` | Gateway within the management subnet; defaults to containerlab’s gateway selection. |
+| `--mgmt-range CIDR` | Subnet used to assign node addresses; must be within the management subnet. |
+| `--mgmt-bridge NAME` | Management bridge interface name. |
+| `--mgmt-mtu NUMBER` | Management network MTU. |
 | `--mgmt-network NAME` | Docker management network name; defaults to containerlab's `clab` network. |
 | `--name-servers IP [IP ...]` | IPv4 DNS servers in `MGMT`; default `CLAB_DNS` or `8.8.8.8 1.1.1.1`. |
 | `--ntp-servers IP [IP ...]` | IPv4 NTP servers in `MGMT`; default `CLAB_NTP` (omit if unset). |
