@@ -9,6 +9,7 @@ ACT Automation.code-workspace
 
 # Any topology files
 topology*
+!acta/topology*.py
 *.yml
 *.annotations.json
 *.eos
