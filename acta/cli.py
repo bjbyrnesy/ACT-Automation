@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from acta.create import run_create
+from acta.extend import extend_topology
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,7 +25,48 @@ def build_parser() -> argparse.ArgumentParser:
             "spare spine/leaf/mleaf capacity)"
         ),
     )
-    sub.add_parser("extend", help="Grow an existing topology on unused ports")
+    extend = sub.add_parser(
+        "extend",
+        help="Grow an existing topology on unused ports",
+        description=(
+            "Grow an existing topology using unused ports only. Existing "
+            "node:Ethernet endpoints never change."
+        ),
+    )
+    extend.add_argument(
+        "topology",
+        type=Path,
+        help="ACT topology YAML (default: overwrite in place)",
+    )
+    extend.add_argument(
+        "--add",
+        choices=("spine", "leaf", "pair", "mleaf"),
+        required=True,
+        help="What to add",
+    )
+    extend.add_argument("--site", help="Site letter for a multi-site topology")
+    extend.add_argument(
+        "--pair",
+        type=int,
+        help="Leaf pair index for --add mleaf",
+    )
+    extend.add_argument(
+        "--count",
+        type=int,
+        default=1,
+        help="How many leaves or member leaves to add (default: 1)",
+    )
+    output = extend.add_mutually_exclusive_group()
+    output.add_argument(
+        "--out",
+        type=Path,
+        help="Write result to PATH; leave input unchanged",
+    )
+    output.add_argument(
+        "--new",
+        action="store_true",
+        help="Write a new dated topology file beside the input",
+    )
     sub.add_parser(
         "upload",
         help="Upload topology YAML to ACT; optional lab create/deploy",
@@ -53,6 +95,22 @@ def main(argv: list[str] | None = None) -> int:
         except (EOFError, RuntimeError, ValueError) as error:
             print(f"ERROR: {error}", file=sys.stderr, flush=True)
             return 2
+        return 0
+    if args.command == "extend":
+        try:
+            output_path = extend_topology(
+                args.topology,
+                args.add,
+                site=args.site,
+                pair=args.pair,
+                count=args.count,
+                out=args.out,
+                new=args.new,
+            )
+        except (NotImplementedError, OSError, RuntimeError, ValueError) as error:
+            print(f"ERROR: {error}", file=sys.stderr, flush=True)
+            return 2
+        print(f"Wrote {output_path}")
         return 0
     print(f"ERROR: command {args.command!r} not implemented yet", flush=True)
     return 2
