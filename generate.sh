@@ -64,7 +64,15 @@ load_params_from_topology_file() {
     if [[ -n "$bb_line" ]]; then
         # --- Multi-DC topology ---
         HOSTNAME_PREFIX=$(sed -E 's/^  - (.+)-bb1:$/\1/' <<< "$bb_line")
-        DC_COUNT=$(grep -cE "^  - ${HOSTNAME_PREFIX}-[A-D]-border1:$" "$file" 2>/dev/null || echo "")
+        local border_count
+        border_count=$(grep -cE "^  - ${HOSTNAME_PREFIX}-[A-D]-border1:$" "$file" 2>/dev/null) || border_count=0
+        if (( border_count > 0 )); then
+            FABRIC_MODE="l3ls"
+            DC_COUNT="${border_count}"
+        else
+            FABRIC_MODE="l2"
+            DC_COUNT=$(grep -cE "^  - ${HOSTNAME_PREFIX}-[A-D]-spine1:$" "$file" 2>/dev/null) || DC_COUNT=""
+        fi
 
         # Use DC "A" as the reference (all DCs are uniform)
         SPINE_COUNT=$(grep -cE "^  - ${HOSTNAME_PREFIX}-A-spine[0-9]+:$" "$file" 2>/dev/null || echo "")
@@ -95,6 +103,7 @@ load_params_from_topology_file() {
     else
         # --- Single-DC topology ---
         DC_COUNT="1"
+        FABRIC_MODE=""
 
         local first_spine
         first_spine=$(grep -m1 -E "^  - [A-Za-z0-9-]+-spine1:$" "$file" || true)
@@ -158,6 +167,7 @@ MLAG_PAIRS=""
 EOS_VERSION=""
 MEMBER_LEAF_PAIRS=""
 MEMBER_LEAVES_PER_PAIR=""
+FABRIC_MODE=""
 
 echo
 echo "Topology parameters:"
@@ -228,10 +238,23 @@ if (( DC_COUNT > 1 )); then
     MAX_TOTAL_MEMBER_LEAVES=${MAX_TOTAL_MEMBER_LEAVES_MULTI}
 fi
 
+FABRIC_MODE="${FABRIC_MODE:-}"
 if (( DC_COUNT > 1 )); then
+    # l3ls: border leaves between spines and backbone (default, prior behavior).
+    # l2: no borders; backbone dual-homes directly to spines (campus L2 LS).
+    prompt_with_current FABRIC_MODE "Fabric mode (l3ls=border leaves, l2=spine uplinks)" "${FABRIC_MODE:-l3ls}"
+    case "${FABRIC_MODE}" in
+        [Ll]3[Ll][Ss]|l3|L3) FABRIC_MODE="l3ls" ;;
+        [Ll]2|campus|CAMPUS) FABRIC_MODE="l2" ;;
+        *)
+            echo "ERROR: fabric mode must be l3ls or l2, got '${FABRIC_MODE}'." >&2
+            exit 1
+            ;;
+    esac
     prompt_with_current SPINE_COUNT "Spines per site"                        "${DEFAULT_SPINES}"
     prompt_with_current LEAF_COUNT  "Leaves per site"                        "${DEFAULT_LEAVES}"
 else
+    FABRIC_MODE=""
     prompt_with_current SPINE_COUNT "Number of spines"                      "${DEFAULT_SPINES}"
     prompt_with_current LEAF_COUNT  "Number of leaves"                      "${DEFAULT_LEAVES}"
 fi
@@ -393,7 +416,11 @@ else
     echo "Will write ${OUT_NAME}"
 fi
 if (( DC_COUNT > 1 )); then
-    echo "  ${DC_COUNT} site(s), ${SPINE_COUNT} spine(s)/site, ${LEAF_COUNT} leaf/leaves/site, 2 border leaves/site, 2 backbone routers${member_note}, EOS ${EOS_VERSION}, full mesh${mlag_note}"
+    if [[ "${FABRIC_MODE}" == "l2" ]]; then
+        echo "  ${DC_COUNT} site(s), fabric l2 (spine uplinks), ${SPINE_COUNT} spine(s)/site, ${LEAF_COUNT} leaf/leaves/site, 2 backbone routers${member_note}, EOS ${EOS_VERSION}, full mesh${mlag_note}"
+    else
+        echo "  ${DC_COUNT} site(s), fabric l3ls, ${SPINE_COUNT} spine(s)/site, ${LEAF_COUNT} leaf/leaves/site, 2 border leaves/site, 2 backbone routers${member_note}, EOS ${EOS_VERSION}, full mesh${mlag_note}"
+    fi
 else
     echo "  ${SPINE_COUNT} spine(s), ${LEAF_COUNT} leaf/leaves${member_note}, EOS ${EOS_VERSION}, full mesh${mlag_note}"
 fi
@@ -597,14 +624,15 @@ NODE
             L="${DC_LETTERS[d]}"
             base=$((4 + d * 62))
 
-            # Border leaves
-            echo ""
-            echo "  ###########################################################################"
-            echo "  # Site ${L} — Border leaves"
-            echo "  ###########################################################################"
+            if [[ "${FABRIC_MODE}" == "l3ls" ]]; then
+                # Border leaves (L3LS only — sit between spines and backbone)
+                echo ""
+                echo "  ###########################################################################"
+                echo "  # Site ${L} — Border leaves"
+                echo "  ###########################################################################"
 
-            for (( b=1; b<=2; b++ )); do
-                cat <<NODE
+                for (( b=1; b<=2; b++ )); do
+                    cat <<NODE
 
   - ${HOSTNAME_PREFIX}-${L}-border${b}:
       node_type: veos
@@ -613,9 +641,10 @@ NODE
       system_mac_address: $(generate_mac "${L}-border${b}")
       ztp: false
 NODE
-            done
+                done
+            fi
 
-            # Spines
+            # Spines (IPs stay at base+2 even in l2 so leaf offsets stay stable)
             echo ""
             echo "  ###########################################################################"
             echo "  # Site ${L} — Spines"
@@ -727,23 +756,26 @@ LINKHEADER
                 done
             fi
 
-            # Border <-> spine links
-            echo ""
-            echo "  # Site ${L} — border <-> spine"
-            for (( s=1; s<=SPINE_COUNT; s++ )); do
-                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${s}, ${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 1))]"
-                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${s}, ${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 2))]"
-            done
+            if [[ "${FABRIC_MODE}" == "l3ls" ]]; then
+                # Border <-> spine links
+                echo ""
+                echo "  # Site ${L} — border <-> spine"
+                for (( s=1; s<=SPINE_COUNT; s++ )); do
+                    echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${s}, ${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 1))]"
+                    echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${s}, ${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 2))]"
+                done
 
-            # Border MLAG peer links
-            bl_mlag_a=$((SPINE_COUNT + 1))
-            bl_mlag_b=$((SPINE_COUNT + 2))
-            echo ""
-            echo "  # Site ${L} — border MLAG peer"
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_mlag_a}, ${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_mlag_a}]"
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_mlag_b}, ${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_mlag_b}]"
+                # Border MLAG peer links
+                bl_mlag_a=$((SPINE_COUNT + 1))
+                bl_mlag_b=$((SPINE_COUNT + 2))
+                echo ""
+                echo "  # Site ${L} — border MLAG peer"
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_mlag_a}, ${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_mlag_a}]"
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_mlag_b}, ${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_mlag_b}]"
+            fi
 
-            # Spine MLAG peer links (per-site opt-in)
+            # Spine MLAG peer links (per-site opt-in).
+            # Ports LEAF_COUNT+1/+2 are border (l3ls) or backbone (l2); MLAG uses +3/+4.
             if [[ "${SPINE_MLAG_SITES}" == *"${L}"* ]]; then
                 spine_mlag_a=$((LEAF_COUNT + 3))
                 spine_mlag_b=$((LEAF_COUNT + 4))
@@ -754,23 +786,38 @@ LINKHEADER
             fi
         done
 
-        # Backbone interconnect — border <-> backbone
-        echo ""
-        echo "  # Backbone — border <-> backbone"
-        for (( d=0; d<DC_COUNT; d++ )); do
-            L="${DC_LETTERS[d]}"
-            bl_bb1_port=$((SPINE_COUNT + 3))
-            bl_bb2_port=$((SPINE_COUNT + 4))
-            bb_port_1=$((2 * d + 1))
-            bb_port_2=$((2 * d + 2))
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_bb1_port}, ${HOSTNAME_PREFIX}-bb1:Ethernet${bb_port_1}]"
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_bb1_port}, ${HOSTNAME_PREFIX}-bb1:Ethernet${bb_port_2}]"
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_bb2_port}, ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_port_1}]"
-            echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_bb2_port}, ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_port_2}]"
-        done
+        if [[ "${FABRIC_MODE}" == "l2" ]]; then
+            # Backbone interconnect — each spine dual-homed to both bbs
+            echo ""
+            echo "  # Backbone — spine <-> backbone (l2)"
+            for (( d=0; d<DC_COUNT; d++ )); do
+                L="${DC_LETTERS[d]}"
+                for (( s=1; s<=SPINE_COUNT; s++ )); do
+                    bb_port=$((d * SPINE_COUNT + s))
+                    echo "  - connection: [${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 1)), ${HOSTNAME_PREFIX}-bb1:Ethernet${bb_port}]"
+                    echo "  - connection: [${HOSTNAME_PREFIX}-${L}-spine${s}:Ethernet$((LEAF_COUNT + 2)), ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_port}]"
+                done
+            done
+            bb_peer_port=$((DC_COUNT * SPINE_COUNT + 1))
+        else
+            # Backbone interconnect — border <-> backbone
+            echo ""
+            echo "  # Backbone — border <-> backbone"
+            for (( d=0; d<DC_COUNT; d++ )); do
+                L="${DC_LETTERS[d]}"
+                bl_bb1_port=$((SPINE_COUNT + 3))
+                bl_bb2_port=$((SPINE_COUNT + 4))
+                bb_port_1=$((2 * d + 1))
+                bb_port_2=$((2 * d + 2))
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_bb1_port}, ${HOSTNAME_PREFIX}-bb1:Ethernet${bb_port_1}]"
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_bb1_port}, ${HOSTNAME_PREFIX}-bb1:Ethernet${bb_port_2}]"
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border1:Ethernet${bl_bb2_port}, ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_port_1}]"
+                echo "  - connection: [${HOSTNAME_PREFIX}-${L}-border2:Ethernet${bl_bb2_port}, ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_port_2}]"
+            done
+            bb_peer_port=$((2 * DC_COUNT + 1))
+        fi
 
         # Backbone peer link
-        bb_peer_port=$((2 * DC_COUNT + 1))
         echo ""
         echo "  # Backbone peer link"
         echo "  - connection: [${HOSTNAME_PREFIX}-bb1:Ethernet${bb_peer_port}, ${HOSTNAME_PREFIX}-bb2:Ethernet${bb_peer_port}]"
@@ -871,7 +918,7 @@ if command -v dot >/dev/null 2>&1; then
     generate_dot_multi_dc() {
         local diagram_title="${SERIAL_PREFIX}: ${DC_COUNT} site × (${SPINE_COUNT} spine × ${LEAF_COUNT} leaf"
         [[ "${MLAG_PAIRS}" == "y" ]] && diagram_title+=" MLAG"
-        diagram_title+=") + backbone"
+        diagram_title+=") + backbone (${FABRIC_MODE})"
 
         echo 'digraph topology {'
         echo "  label=\"${diagram_title}\";"
@@ -899,13 +946,14 @@ if command -v dot >/dev/null 2>&1; then
             echo "    fontname=\"Helvetica-Bold\"; fontsize=13; margin=12;"
             echo ''
 
-            # Border leaves
-            printf '    { rank=same;'
-            for (( b=1; b<=2; b++ )); do
-                printf ' %s_border%d [label="%s-%s-border%d\\n.%d", fillcolor="#ede9fe"];' \
-                    "${L}" "${b}" "${HOSTNAME_PREFIX}" "${L}" "${b}" "$((base + b - 1))"
-            done
-            echo ' }'
+            if [[ "${FABRIC_MODE}" == "l3ls" ]]; then
+                printf '    { rank=same;'
+                for (( b=1; b<=2; b++ )); do
+                    printf ' %s_border%d [label="%s-%s-border%d\\n.%d", fillcolor="#ede9fe"];' \
+                        "${L}" "${b}" "${HOSTNAME_PREFIX}" "${L}" "${b}" "$((base + b - 1))"
+                done
+                echo ' }'
+            fi
 
             # Spines
             printf '    { rank=same;'
@@ -938,11 +986,12 @@ if command -v dot >/dev/null 2>&1; then
             fi
             echo ''
 
-            # Intra-DC edges: border <-> spine
-            for (( s=1; s<=SPINE_COUNT; s++ )); do
-                echo "    ${L}_border1 -> ${L}_spine${s};"
-                echo "    ${L}_border2 -> ${L}_spine${s};"
-            done
+            if [[ "${FABRIC_MODE}" == "l3ls" ]]; then
+                for (( s=1; s<=SPINE_COUNT; s++ )); do
+                    echo "    ${L}_border1 -> ${L}_spine${s};"
+                    echo "    ${L}_border2 -> ${L}_spine${s};"
+                done
+            fi
 
             # Spine <-> leaf mesh
             for (( s=1; s<=SPINE_COUNT; s++ )); do
@@ -959,8 +1008,9 @@ if command -v dot >/dev/null 2>&1; then
                 done
             fi
 
-            # Border MLAG peer
-            echo "    ${L}_border1 -> ${L}_border2 [style=dashed, color=\"#dc2626\", penwidth=1.5, constraint=false];"
+            if [[ "${FABRIC_MODE}" == "l3ls" ]]; then
+                echo "    ${L}_border1 -> ${L}_border2 [style=dashed, color=\"#dc2626\", penwidth=1.5, constraint=false];"
+            fi
 
             # Spine MLAG peer
             if [[ "${SPINE_MLAG_SITES}" == *"${L}"* ]]; then
@@ -985,14 +1035,23 @@ if command -v dot >/dev/null 2>&1; then
             echo ''
         done
 
-        # Cross-DC edges: border <-> backbone
-        for (( d=0; d<DC_COUNT; d++ )); do
-            local L="${DC_LETTERS[d]}"
-            echo "  ${L}_border1 -> bb1 [color=\"#059669\", penwidth=1.5];"
-            echo "  ${L}_border2 -> bb1 [color=\"#059669\", penwidth=1.5];"
-            echo "  ${L}_border1 -> bb2 [color=\"#059669\", penwidth=1.5];"
-            echo "  ${L}_border2 -> bb2 [color=\"#059669\", penwidth=1.5];"
-        done
+        if [[ "${FABRIC_MODE}" == "l2" ]]; then
+            for (( d=0; d<DC_COUNT; d++ )); do
+                local L="${DC_LETTERS[d]}"
+                for (( s=1; s<=SPINE_COUNT; s++ )); do
+                    echo "  ${L}_spine${s} -> bb1 [color=\"#059669\", penwidth=1.5];"
+                    echo "  ${L}_spine${s} -> bb2 [color=\"#059669\", penwidth=1.5];"
+                done
+            done
+        else
+            for (( d=0; d<DC_COUNT; d++ )); do
+                local L="${DC_LETTERS[d]}"
+                echo "  ${L}_border1 -> bb1 [color=\"#059669\", penwidth=1.5];"
+                echo "  ${L}_border2 -> bb1 [color=\"#059669\", penwidth=1.5];"
+                echo "  ${L}_border1 -> bb2 [color=\"#059669\", penwidth=1.5];"
+                echo "  ${L}_border2 -> bb2 [color=\"#059669\", penwidth=1.5];"
+            done
+        fi
 
         # Backbone peer
         echo "  bb1 -> bb2 [style=dashed, color=\"#059669\", penwidth=2, constraint=false];"
