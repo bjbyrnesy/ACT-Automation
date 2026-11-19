@@ -38,6 +38,7 @@ def test_prompt_int_clamps_default_and_reprompts_above_maximum(
 def test_run_create_clamps_cached_member_leaf_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ):
     (tmp_path / ".config").write_text(
         "MEMBER_LEAVES_PER_PAIR=4\nMAX_MLEAFS_PER_PAIR=4",
@@ -70,6 +71,9 @@ def test_run_create_clamps_cached_member_leaf_default(
 
     assert "demo-mleaf1:" in output_path.read_text(encoding="utf-8")
     assert create.load_config(tmp_path / ".config")["MEMBER_LEAVES_PER_PAIR"] == "1"
+    out = capsys.readouterr().out
+    assert "acta.py upload" in out
+    assert f"acta.py extend {output_path.name} --add leaf" in out
 
 
 def test_emit_includes_capacity_and_mesh_without_spare_links():
@@ -258,3 +262,53 @@ def test_multi_dc_rejects_bad_mode_and_uplink_overflow():
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, fabric_mode=None)))
     with pytest.raises(ValueError, match="hard cap"):
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, max_leaves=13)))
+
+
+def _spec(**changes) -> FabricSpec:
+    base = {
+        "hostname_prefix": "demo",
+        "serial_prefix": "demo",
+        "eos_version": "4.35.4M",
+        "capacity": Capacity(None, 9, 8, 2, 2, 2),
+        "mlag_pairs": True,
+        "spine_mlag": False,
+        "member_leaf_pairs": [],
+        "member_leaves_per_pair": 0,
+    }
+    base.update(changes)
+    return FabricSpec(**base)
+
+
+def test_validate_spec_rejects_max_spines_above_address_ceiling():
+    with pytest.raises(ValueError, match="max_spines 10.*limit of 9"):
+        emit_act_yaml(_spec(capacity=Capacity(None, 10, 4, 0, 2, 2)))
+
+
+def test_validate_spec_accepts_nine_spines_without_ip_collisions():
+    text = emit_act_yaml(_spec(capacity=Capacity(None, 9, 4, 0, 9, 2)))
+    addresses = [line for line in text.splitlines() if "ip_addr:" in line]
+    assert len(addresses) == len(set(addresses))
+
+
+def test_validate_spec_rejects_multi_dc_member_leaves_over_site_block():
+    spec = _spec(
+        capacity=Capacity("l3ls", 2, 8, 6, 2, 8),
+        member_leaf_pairs=[1, 2, 3],
+        member_leaves_per_pair=5,
+        dc_count=2,
+    )
+    with pytest.raises(ValueError, match="15 member leaves.*limit of 12 per site"):
+        emit_act_yaml(spec)
+
+
+def test_node_address_bounds():
+    assert create.node_address("spine", 9) == 19
+    assert create.node_address("leaf", 1) == 21
+    with pytest.raises(ValueError, match="spine10"):
+        create.node_address("spine", 10)
+    with pytest.raises(ValueError, match="mleaf13"):
+        create.node_address("mleaf", 13, site_index=0)
+    with pytest.raises(ValueError, match="leaf40"):
+        create.node_address("leaf", 40, site_index=1)
+    with pytest.raises(ValueError, match="unknown"):
+        create.node_address("border", 1)

@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -8,19 +9,21 @@ from acta.extend import extend_topology
 from acta.topology import parse_connections
 
 
-def _write_base(tmp_path: Path) -> Path:
+def _write_base(tmp_path: Path, **capacity: int) -> Path:
+    cap = {
+        "fabric_mode": None,
+        "max_spines": 4,
+        "max_leaves": 8,
+        "max_mleafs_per_pair": 2,
+        "spines": 2,
+        "leaves": 2,
+    }
+    cap.update(capacity)
     spec = FabricSpec(
         hostname_prefix="demo",
         serial_prefix="demo",
         eos_version="4.35.4M",
-        capacity=Capacity(
-            fabric_mode=None,
-            max_spines=4,
-            max_leaves=8,
-            max_mleafs_per_pair=2,
-            spines=2,
-            leaves=2,
-        ),
+        capacity=Capacity(**cap),
         mlag_pairs=True,
         spine_mlag=False,
         member_leaf_pairs=[],
@@ -55,9 +58,11 @@ def test_add_leaf_preserves_existing_endpoints(tmp_path: Path):
     assert parse_capacity_header(path.read_text()).leaves == 3
 
 
-def test_warns_when_leaf_exceeds_soft_capacity(tmp_path: Path):
-    with pytest.warns(UserWarning, match=r"leaf9 exceeds.*max_leaves=8"):
-        extend_topology(_write_base(tmp_path), add="leaf", count=7)
+def test_leaf_exceeding_soft_capacity_is_reported_in_result(tmp_path: Path):
+    result = extend_topology(_write_base(tmp_path), add="leaf", count=7)
+    assert any("leaf9 exceeds" in w and "max_leaves=8" in w for w in result.warnings)
+    assert result.added_nodes[-1] == "demo-leaf9"
+    assert result.free_leaves == 0
 
 
 def test_add_spine_meshes_to_all_leaves_and_preserves_endpoints(tmp_path: Path):
@@ -207,16 +212,77 @@ def test_mleaf_rejects_pair_without_two_leaves(tmp_path: Path):
         extend_topology(_write_base(tmp_path), add="mleaf", pair=2)
 
 
-def test_warns_when_spine_exceeds_soft_capacity(tmp_path: Path):
-    with pytest.warns(UserWarning, match=r"spine5 exceeds.*max_spines=4"):
-        extend_topology(_write_base(tmp_path), add="spine", count=3)
+def test_spine_exceeding_soft_capacity_is_reported_in_result(tmp_path: Path):
+    result = extend_topology(_write_base(tmp_path), add="spine", count=3)
+    assert any("spine5 exceeds" in w and "max_spines=4" in w for w in result.warnings)
+    assert result.added_nodes == ("demo-spine3", "demo-spine4", "demo-spine5")
 
 
-def test_warns_when_mleaf_exceeds_soft_capacity(tmp_path: Path):
-    with pytest.warns(
-        UserWarning, match=r"mleaf slot 3 exceeds.*max_mleafs_per_pair=2"
-    ):
-        extend_topology(_write_base(tmp_path), add="mleaf", pair=1, count=3)
+def test_mleaf_exceeding_soft_capacity_is_reported_in_result(tmp_path: Path):
+    result = extend_topology(_write_base(tmp_path), add="mleaf", pair=1, count=3)
+    assert any(
+        "mleaf slot 3 exceeds" in w and "max_mleafs_per_pair=2" in w
+        for w in result.warnings
+    )
+
+
+def test_result_reports_added_nodes_and_free_slots(tmp_path: Path):
+    path = _write_base(tmp_path)
+    result = extend_topology(path, add="mleaf", pair=1)
+    assert result.path == path
+    assert result.added_nodes == ("demo-mleaf1",)
+    assert result.warnings == ()
+    assert (result.free_leaves, result.free_spines) == (6, 2)
+    assert result.free_mleaf_slots == (1,)
+    assert "leaves 6" in result.free_slots_summary()
+    assert "pair 1: 1" in result.free_slots_summary()
+
+
+def _ports_by_node(path: Path) -> dict[str, list[int]]:
+    ports: dict[str, list[int]] = {}
+    for c in parse_connections(path.read_text()):
+        ports.setdefault(c.a_node, []).append(c.a_port)
+        ports.setdefault(c.b_node, []).append(c.b_port)
+    return ports
+
+
+def test_spine_overrun_does_not_take_mlag_or_mleaf_ports(tmp_path: Path):
+    path = _write_base(tmp_path, max_spines=2)
+    extend_topology(path, add="spine")
+    extend_topology(path, add="pair")
+    extend_topology(path, add="mleaf", pair=2)
+    ports = _ports_by_node(path)
+    for node, node_ports in ports.items():
+        assert len(node_ports) == len(set(node_ports)), node
+    # leaf1 MLAG ports (3, 4) and member-leaf slots (5, 6) stay planned.
+    links = _endpoint_set(path)
+    assert ("demo-leaf1", 3, "demo-leaf2", 3) in links
+    assert ("demo-leaf1", 4, "demo-leaf2", 4) in links
+    assert ("demo-spine3", 1, "demo-leaf1", 7) in links
+    assert {
+        ("demo-mleaf1", 1, "demo-leaf3", 5),
+        ("demo-mleaf1", 2, "demo-leaf4", 5),
+    } <= links
+
+
+def test_leaf_overrun_ports_sit_above_spine_reserved_blocks(tmp_path: Path):
+    path = _write_base(tmp_path)
+    extend_topology(path, add="leaf", count=7)
+    links = _endpoint_set(path)
+    # max_leaves=8 -> spine ports 9, 10 are the reserved MLAG block.
+    assert ("demo-spine1", 11, "demo-leaf9", 1) in links
+    assert ("demo-spine2", 11, "demo-leaf9", 2) in links
+
+
+def test_pair_discovered_when_peer_links_use_non_planned_ports(tmp_path: Path):
+    path = _write_base(tmp_path)
+    text = path.read_text().replace(
+        "demo-leaf1:Ethernet5, demo-leaf2:Ethernet5",
+        "demo-leaf1:Ethernet12, demo-leaf2:Ethernet12",
+    )
+    path.write_text(text)
+    extend_topology(path, add="mleaf", pair=1)
+    assert ("demo-mleaf1", 1, "demo-leaf1", 7) in _endpoint_set(path)
 
 
 def _write_multi_dc(tmp_path: Path, fabric_mode: str = "l3ls") -> Path:
@@ -318,3 +384,127 @@ def test_multi_dc_l2_spine_limit_is_per_site(tmp_path: Path):
     path = _write_multi_dc(tmp_path, "l2")
     with pytest.raises(ValueError, match="L2"):
         extend_topology(path, add="spine", site="B")
+
+
+def _snapshot(directory: Path) -> dict[str, str]:
+    return {p.name: p.read_text() for p in sorted(directory.iterdir()) if p.is_file()}
+
+
+def test_extend_hitting_hard_port_cap_writes_nothing(tmp_path: Path):
+    path = _write_base(tmp_path)
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="no free Ethernet ports"):
+        extend_topology(path, add="leaf", count=15)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_out_refuses_existing_path_and_leaves_both_untouched(tmp_path: Path):
+    path = _write_base(tmp_path)
+    existing = tmp_path / "keep.yml"
+    existing.write_text("keep me\n")
+    before = _snapshot(tmp_path)
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        extend_topology(path, add="leaf", out=existing)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_out_and_new_are_mutually_exclusive(tmp_path: Path):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        extend_topology(
+            _write_base(tmp_path), add="leaf", out=tmp_path / "x.yml", new=True
+        )
+
+
+def test_new_writes_unique_dated_name_and_keeps_input(tmp_path: Path):
+    path = _write_base(tmp_path)
+    original = path.read_text()
+    today = date.today().isoformat()
+
+    first = extend_topology(path, add="leaf", new=True).path
+    second = extend_topology(path, add="leaf", new=True).path
+
+    assert first.name == f"topology-demo-{today}.yml"
+    assert second.name == f"topology-demo-{today}-2.yml"
+    assert path.read_text() == original
+    assert "demo-leaf3:" in first.read_text()
+
+
+def test_new_does_not_double_date_an_already_dated_stem(tmp_path: Path):
+    path = tmp_path / "topology-demo-2026-01-02.yml"
+    path.write_text(_write_base(tmp_path).read_text())
+    today = date.today().isoformat()
+
+    result = extend_topology(path, add="leaf", new=True)
+
+    assert result.path.name == f"topology-demo-{today}.yml"
+
+
+def _write_multi_dc_members(tmp_path: Path) -> Path:
+    spec = FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity(
+            fabric_mode="l3ls",
+            max_spines=2,
+            max_leaves=8,
+            max_mleafs_per_pair=2,
+            spines=2,
+            leaves=4,
+        ),
+        mlag_pairs=True,
+        spine_mlag=False,
+        member_leaf_pairs=[1, 2],
+        member_leaves_per_pair=2,
+        dc_count=2,
+    )
+    path = tmp_path / "topology-multi-members.yml"
+    path.write_text(emit_act_yaml(spec))
+    return path
+
+
+def test_multi_dc_mleaf_beyond_per_site_ip_block_is_rejected_atomically(
+    tmp_path: Path,
+):
+    path = _write_multi_dc_members(tmp_path)
+    before = _snapshot(tmp_path)
+
+    # Site B already has mleaf1-4; mleaf13 would spill past its 12-address block.
+    with pytest.raises(ValueError, match=r"mleaf13 exceeds.*limit of 12"):
+        extend_topology(path, add="mleaf", pair=1, site="B", count=9)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_multi_dc_mleaf_up_to_per_site_ip_limit_has_unique_addresses(tmp_path: Path):
+    path = _write_multi_dc_members(tmp_path)
+    extend_topology(path, add="mleaf", pair=1, site="B", count=8)
+    addresses = [
+        line.split()[-1] for line in path.read_text().splitlines() if "ip_addr:" in line
+    ]
+    assert len(addresses) == len(set(addresses))
+
+
+def test_single_dc_too_many_spines_is_rejected_atomically(tmp_path: Path):
+    path = _write_base(tmp_path)
+    before = _snapshot(tmp_path)
+
+    # spine10 would land on .20, next to the .21+ leaf block.
+    with pytest.raises(ValueError, match=r"spine10 exceeds.*limit of 9"):
+        extend_topology(path, add="spine", count=8)
+
+    assert _snapshot(tmp_path) == before
+
+
+def test_single_dc_nine_spines_have_unique_addresses(tmp_path: Path):
+    path = _write_base(tmp_path)
+    extend_topology(path, add="spine", count=7)
+    addresses = [
+        line.split()[-1] for line in path.read_text().splitlines() if "ip_addr:" in line
+    ]
+    assert len(addresses) == len(set(addresses))
+    assert "demo-spine9:" in path.read_text()

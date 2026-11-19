@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 from acta.create import run_create
-from acta.extend import extend_topology
+from acta.extend import ExtendResult, extend_topology, topology_sites
+from acta.prompt import prompt_value
+
+_ADD_CHOICES = ("spine", "leaf", "pair", "mleaf")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,15 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     extend.add_argument(
         "--add",
-        choices=("spine", "leaf", "pair", "mleaf"),
-        required=True,
-        help="What to add",
+        choices=_ADD_CHOICES,
+        help="What to add (prompted when omitted in an interactive terminal)",
     )
     extend.add_argument(
         "--site",
         help=(
-            "Site letter (A-D); required for multi-DC topologies, "
-            "scopes the extension to that site"
+            "Site letter (A-D); required for multi-DC topologies "
+            "(prompted when omitted in an interactive terminal)"
         ),
     )
     extend.add_argument(
@@ -95,6 +97,66 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _prompt_choice(label: str, choices: tuple[str, ...] | list[str]) -> str:
+    """Prompt until the answer is one of ``choices`` (case-insensitive)."""
+    options = "/".join(choices)
+    while True:
+        answer = prompt_value(f"{label} ({options})").strip().casefold()
+        for choice in choices:
+            if answer == choice.casefold():
+                return choice
+        print(f"  Enter one of: {options}.", file=sys.stderr)
+
+
+def _prompt_pair() -> int:
+    while True:
+        answer = prompt_value("Leaf pair number (1 = lowest-numbered pair)").strip()
+        if answer.isdecimal() and int(answer) >= 1:
+            return int(answer)
+        print("  Enter a whole number of at least 1.", file=sys.stderr)
+
+
+def _print_extend_result(result: ExtendResult) -> None:
+    print(f"Wrote {result.path}")
+    print(f"Added: {', '.join(result.added_nodes)}")
+    for warning in result.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+    print(result.free_slots_summary())
+
+
+def _run_extend(args: argparse.Namespace) -> int:
+    interactive = sys.stdin.isatty()
+    add: str | None = args.add
+    if add is None:
+        if not interactive:
+            print(
+                f"ERROR: --add is required ({', '.join(_ADD_CHOICES)})",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+        add = _prompt_choice("What to add", _ADD_CHOICES)
+    site: str | None = args.site
+    pair: int | None = args.pair
+    if interactive and site is None:
+        sites = topology_sites(args.topology)
+        if sites:
+            site = _prompt_choice("Site", sites)
+    if interactive and add == "mleaf" and pair is None:
+        pair = _prompt_pair()
+    result = extend_topology(
+        args.topology,
+        add,
+        site=site,
+        pair=pair,
+        count=args.count,
+        out=args.out,
+        new=args.new,
+    )
+    _print_extend_result(result)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -107,19 +169,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "extend":
         try:
-            output_path = extend_topology(
-                args.topology,
-                args.add,
-                site=args.site,
-                pair=args.pair,
-                count=args.count,
-                out=args.out,
-                new=args.new,
-            )
-        except (NotImplementedError, OSError, RuntimeError, ValueError) as error:
+            return _run_extend(args)
+        except (
+            EOFError,
+            NotImplementedError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as error:
             print(f"ERROR: {error}", file=sys.stderr, flush=True)
             return 2
-        print(f"Wrote {output_path}")
-        return 0
     print(f"ERROR: command {args.command!r} not implemented yet", flush=True)
     return 2

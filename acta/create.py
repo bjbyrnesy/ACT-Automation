@@ -64,6 +64,7 @@ def _validate_spec(spec: FabricSpec) -> None:
         raise ValueError("member_leaves_per_pair requires member_leaf_pairs")
     if spec.member_leaves_per_pair > spec.capacity.max_mleafs_per_pair:
         raise ValueError("member_leaves_per_pair exceeds reserved member-leaf capacity")
+    _validate_address_ceilings(spec)
 
     pair_count = spec.capacity.leaves // 2
     if len(set(spec.member_leaf_pairs)) != len(spec.member_leaf_pairs):
@@ -94,6 +95,31 @@ def _validate_spec(spec: FabricSpec) -> None:
         )
 
 
+def _validate_address_ceilings(spec: FabricSpec) -> None:
+    """Reject specs whose nodes would overflow their management-IP blocks."""
+    multi_dc = spec.dc_count > 1
+    spine_limit = address_limit("spine", multi_dc)
+    if spec.capacity.max_spines > spine_limit:
+        raise ValueError(
+            f"max_spines {spec.capacity.max_spines} exceeds the management-address "
+            f"limit of {spine_limit} spines"
+        )
+    leaf_limit = address_limit("leaf", multi_dc)
+    if spec.capacity.leaves > leaf_limit:
+        raise ValueError(
+            f"leaves {spec.capacity.leaves} exceeds the management-address "
+            f"limit of {leaf_limit} leaves"
+        )
+    member_count = len(spec.member_leaf_pairs) * spec.member_leaves_per_pair
+    mleaf_limit = address_limit("mleaf", multi_dc)
+    if member_count > mleaf_limit:
+        scope = "per site" if multi_dc else "in total"
+        raise ValueError(
+            f"{member_count} member leaves exceeds the management-address "
+            f"limit of {mleaf_limit} {scope}"
+        )
+
+
 MAX_DC = 4
 SITE_LETTERS = "ABCD"
 _BB_COUNT = 2
@@ -103,6 +129,16 @@ _SITE_ADDRESS_BASE = 4
 _SITE_ADDRESS_STRIDE = 62
 _MULTI_DC_ADDRESS_OFFSETS = {"border": 0, "spine": 2, "leaf": 11, "mleaf": 50}
 _SINGLE_DC_ADDRESS_BASES = {"spine": 10, "leaf": 20, "mleaf": 130}
+# Per-role index ceilings keep every node inside its own management-IP block
+# (generate.sh MAX_SPINES / MAX_LEAVES[_MULTI] / MAX_TOTAL_MEMBER_LEAVES[_MULTI]).
+MAX_ADDRESS_SPINES = 9
+_SINGLE_DC_ADDRESS_LIMITS = {"spine": MAX_ADDRESS_SPINES, "leaf": 99, "mleaf": 100}
+_MULTI_DC_ADDRESS_LIMITS = {
+    "border": _BORDER_COUNT,
+    "spine": MAX_ADDRESS_SPINES,
+    "leaf": 39,
+    "mleaf": 12,
+}
 
 
 def site_letter(site_index: int) -> str:
@@ -110,8 +146,30 @@ def site_letter(site_index: int) -> str:
     return SITE_LETTERS[site_index]
 
 
+def address_limit(role: str, multi_dc: bool) -> int:
+    """Return the highest node index whose management IP stays in its block."""
+    limits = _MULTI_DC_ADDRESS_LIMITS if multi_dc else _SINGLE_DC_ADDRESS_LIMITS
+    try:
+        return limits[role]
+    except KeyError:
+        scope = "multi-DC" if multi_dc else "single-DC"
+        raise ValueError(f"unknown {scope} node role: {role!r}") from None
+
+
 def node_address(role: str, index: int, site_index: int | None = None) -> int:
-    """Return the last octet of the management address for a fabric node."""
+    """Return the last octet of the management address for a fabric node.
+
+    Raises ``ValueError`` when ``index`` would overflow the role's address block
+    (and so collide with another node's management IP).
+    """
+    multi_dc = site_index is not None
+    limit = address_limit(role, multi_dc)
+    if not 1 <= index <= limit:
+        scope = "per-site multi-DC" if multi_dc else "single-DC"
+        raise ValueError(
+            f"{role}{index} exceeds the {scope} management-address limit "
+            f"of {limit} {role}s"
+        )
     if site_index is None:
         return _SINGLE_DC_ADDRESS_BASES[role] + index
     base = _SITE_ADDRESS_BASE + site_index * _SITE_ADDRESS_STRIDE
@@ -474,7 +532,7 @@ def run_create(project_dir: Path) -> Path:
             "Maximum spines",
             max(spines, _configured_int(config, "MAX_SPINES", 4)),
             minimum=spines,
-            maximum=HARD_PORT_MAX,
+            maximum=min(HARD_PORT_MAX, MAX_ADDRESS_SPINES),
         )
         max_leaves = _prompt_int(
             "Maximum leaves",
@@ -582,4 +640,8 @@ def run_create(project_dir: Path) -> Path:
     print(f"Wrote {output_path.name}")
     if diagram_written:
         print(f"Wrote {diagram_path.name}")
+    print(
+        f"Next: acta.py upload to send {output_path.name} to ACT, "
+        f"or acta.py extend {output_path.name} --add leaf to grow it later."
+    )
     return output_path

@@ -34,7 +34,10 @@ def _parse_body(body: str) -> dict[str, str]:
 def parse_capacity_header(text: str) -> Capacity:
     matches = list(_HEADER_RE.finditer(text))
     if not matches:
-        raise ValueError("missing # capacity: header")
+        raise ValueError(
+            "missing # capacity: header "
+            "(only topologies written by acta.py create can be extended)"
+        )
     merged: dict[str, str] = {}
     for match in matches:
         merged.update(_parse_body(match.group("body")))

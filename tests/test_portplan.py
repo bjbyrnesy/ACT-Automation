@@ -58,3 +58,31 @@ def test_l2_backbone_ports_use_reserved_spine_width():
     plan = PortPlan(_cap(fabric_mode="l2", max_spines=2))
     assert plan.bb_spine_port(1, 1) == 3
     assert plan.bb_peer_port(3) == 7
+
+
+def test_allocate_port_overrun_goes_above_reserved_and_skips_protected():
+    plan = PortPlan(_cap(max_spines=4, max_leaves=8))
+    protected = plan.leaf_protected_ports()
+    top = plan.leaf_reserved_top()
+    assert plan.allocate_port({1, 2}, 5, reserved_top=top, protected=protected) == 5
+    assert (
+        plan.allocate_port(
+            {1, 2}, 5, reserved_top=top, protected=protected, overrun=True
+        )
+        == top + 1
+    )
+    full_above = set(range(top + 1, 17))
+    assert (
+        plan.allocate_port(
+            full_above, 5, reserved_top=top, protected=protected, overrun=True
+        )
+        == 1
+    )
+    with pytest.raises(ValueError, match="16"):
+        plan.allocate_port(
+            full_above | {1, 2, 3, 4},
+            5,
+            reserved_top=top,
+            protected=protected,
+            overrun=True,
+        )
