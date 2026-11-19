@@ -310,6 +310,50 @@ class ContainerlabTests(unittest.TestCase):
             )
             self.assertEqual(path.read_text(), original)
 
+    def test_viewer_layout_groups_sites_and_orders_roles(self):
+        names = ["demo-bb1", "demo-bb2", "demo-A-border1", "demo-A-spine1", "demo-A-leaf1", "demo-A-mleaf1", "demo-B-border1", "demo-B-spine1", "demo-B-leaf1", "demo-B-mleaf1"]
+        labels = clab.topology_layout(names)
+        self.assertEqual(labels["demo-bb1"]["graph-group"], "core")
+        self.assertEqual(labels["demo-A-border1"]["graph-group"], "site A")
+        self.assertEqual(labels["demo-B-leaf1"]["graph-group"], "site B")
+        y = lambda name: int(labels[name]["graph-posY"])
+        self.assertLess(y("demo-bb1"), y("demo-A-border1"))
+        self.assertLess(y("demo-A-border1"), y("demo-A-spine1"))
+        self.assertLess(y("demo-A-spine1"), y("demo-A-leaf1"))
+        self.assertLess(y("demo-A-leaf1"), y("demo-A-mleaf1"))
+        self.assertLess(int(labels["demo-A-leaf1"]["graph-posX"]), int(labels["demo-B-leaf1"]["graph-posX"]))
+        self.assertEqual(labels, clab.topology_layout(list(reversed(names))))
+
+    def test_viewer_layout_handles_single_site_and_multidigit_nodes(self):
+        labels = clab.topology_layout(["dsg-spine1", "dsg-leaf10", "dsg-leaf2", "dsg-mleaf1"])
+        self.assertEqual(labels["dsg-spine1"]["graph-group"], "site A")
+        self.assertLess(int(labels["dsg-leaf2"]["graph-posX"]), int(labels["dsg-leaf10"]["graph-posX"]))
+        self.assertLess(int(labels["dsg-spine1"]["graph-posY"]), int(labels["dsg-mleaf1"]["graph-posY"]))
+
+    def test_member_leaf_sets_are_centered_beneath_connected_leaf_pairs(self):
+        names = ["x-A-leaf1", "x-A-leaf2", "x-A-leaf3", "x-A-leaf4"] + [f"x-A-mleaf{i}" for i in range(1, 7)]
+        links = []
+        for i in range(1, 7):
+            pair = (1, 2) if i <= 5 else (3, 4)
+            for parent in pair:
+                links.append({"connection": [f"x-A-mleaf{i}:Ethernet{parent}", f"x-A-leaf{parent}:Ethernet{i}"]})
+        layout = clab.topology_layout(names, links)
+        x = lambda n: int(layout[n]["graph-posX"])
+        for children, parents in ((range(1, 6), (1, 2)), (range(6, 7), (3, 4))):
+            child_x = [x(f"x-A-mleaf{i}") for i in children]
+            self.assertEqual(sum(child_x) / len(child_x), sum(x(f"x-A-leaf{i}") for i in parents) / len(parents))
+            self.assertEqual(len(child_x), len(set(child_x)))
+        self.assertLess(x("x-A-mleaf5"), x("x-A-mleaf6"))
+
+    def test_viewer_annotations_create_core_and_site_groups(self):
+        layout = clab.topology_layout(["demo-bb1", "demo-A-leaf1", "demo-B-spine1"])
+        annotations = clab.viewer_annotations(layout, {name: name for name in layout})
+        self.assertEqual({g["id"] for g in annotations["groupStyleAnnotations"]}, {"core:1", "site A:1", "site B:1"})
+        self.assertEqual({n["id"]: n["groupId"] for n in annotations["nodeAnnotations"]}, {"demo-bb1": "core:1", "demo-A-leaf1": "site A:1", "demo-B-spine1": "site B:1"})
+        for group in annotations["groupStyleAnnotations"]:
+            self.assertGreater(group["width"], 0)
+            self.assertGreater(group["height"], 0)
+
     def test_real_generator_topologies_convert_with_all_links(self):
         cases = [
             ("demo\n\n1\n2\n4\ny\ny\n1\n1\ny\n\ny\n", "single", None),
@@ -360,6 +404,24 @@ class ContainerlabTests(unittest.TestCase):
                 lab = clab.read_yaml(output)
                 self.assertEqual(len(lab["topology"]["nodes"]), len(act["nodes"]))
                 self.assertEqual(len(lab["topology"]["links"]), len(act["links"]))
+                annotation = json.loads(Path(str(output) + ".annotations.json").read_text())
+                self.assertEqual(len(annotation["nodeAnnotations"]), len(act["nodes"]))
+                positioned = {entry["id"]: entry["position"] for entry in annotation["nodeAnnotations"]}
+                children = {}
+                for link in lab["topology"]["links"]:
+                    names = [endpoint.split(":", 1)[0] for endpoint in link["endpoints"]]
+                    for child, parent in (names, list(reversed(names))):
+                        if "mleaf" in child and "mleaf" not in parent and "leaf" in parent:
+                            children.setdefault(child, set()).add(parent)
+                parent_groups = {}
+                for child, parents in children.items():
+                    parent_groups.setdefault(tuple(sorted(parents)), []).append(child)
+                for parents, members in parent_groups.items():
+                    self.assertEqual(sum(positioned[n]["x"] for n in members) / len(members),
+                                     sum(positioned[n]["x"] for n in parents) / len(parents))
+                for node in lab["topology"]["nodes"].values():
+                    self.assertIn("graph-group", node["labels"])
+                    self.assertIn("graph-posY", node["labels"])
 
     def test_rejects_reused_interfaces(self):
         with tempfile.TemporaryDirectory() as d:
@@ -475,6 +537,28 @@ links:
             self.assertNotIn("-cvvrf=MGMT", run.call_args_list[1].args[3])
             self.assertIn("hostname demo-A-leaf1", run.call_args_list[0].args[3])
             self.assertIn("hostname legacy", run.call_args_list[1].args[3])
+
+    def test_deploy_copies_viewer_annotations_and_preserves_existing_layout(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(clab.MARKER + json.dumps({"name": "demo", "topology": {"nodes": {"a": {"kind": "arista_ceos"}}}}))
+            Path(str(path) + ".annotations.json").write_text('{"nodeAnnotations": []}')
+            args = clab.argparse.Namespace(topology=str(path), host="labhost", mgmt_network=None, runtime="docker")
+            with mock.patch.object(clab, "host_run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+                clab.deploy(args)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[0].args[1], clab.ANNOTATION_SCRIPT)
+            self.assertEqual(run.call_args_list[0].args[3], '{"nodeAnnotations": []}')
+            self.assertEqual(run.call_args_list[1].args[1], clab.DEPLOY_SCRIPT)
+
+    def test_viewer_annotation_upload_does_not_overwrite_existing(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"HOME": d}):
+                first = clab.host_run(None, clab.ANNOTATION_SCRIPT, ["demo"], "first")
+                second = clab.host_run(None, clab.ANNOTATION_SCRIPT, ["demo"], "replacement")
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertEqual((Path(d) / ".act-automation/clab/demo/topology.clab.yml.annotations.json").read_text(), "first")
 
     def test_deploy_passes_requested_runtime(self):
         with tempfile.TemporaryDirectory() as d:

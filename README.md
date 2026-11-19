@@ -128,6 +128,13 @@ and `ntp server vrf MGMT …`. Defaults come from `CLAB_DNS` / `CLAB_NTP` in
 those VRF-scoped DNS/NTP lines when the node has `CLAB_MGMT_VRF`. Regenerate
 and redeploy existing labs to apply generate-time changes.
 
+Generated topologies include a `<topology>.annotations.json` file for the
+Containerlab VS Code Topology Viewer, with explicit `core` and site groups.
+Member leaves are centered under their connected leaf pairs. Deployment copies
+this file to the lab host alongside the topology. Existing local and host-side
+annotations are preserved; to regenerate a layout, first back up and move aside
+the existing annotation files on both the generating machine and lab host.
+
 Container names are `clab-<lab-name>-<node>`. Keep `--name` short. A leading
 `clab-` on ACT hostnames is stripped during conversion so you get
 `clab-campus-A-mleaf1` instead of `clab-2site-campus-clab-A-mleaf1`.
