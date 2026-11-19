@@ -133,6 +133,45 @@ def test_add_mleaf_uses_next_slot_under_pair(tmp_path: Path):
     }
 
 
+def test_pair_index_uses_discovered_peer_links_after_standalone_leaf(
+    tmp_path: Path,
+):
+    path = _write_base(tmp_path)
+    extend_topology(path, add="leaf")
+    extend_topology(path, add="pair")
+
+    extend_topology(path, add="mleaf", pair=2)
+
+    connections = parse_connections(path.read_text())
+    assert {
+        connection.b_node
+        for connection in connections
+        if connection.a_node == "demo-mleaf1"
+    } == {"demo-leaf4", "demo-leaf5"}
+
+
+def test_unrelated_mleaf_substring_does_not_consume_pair_slot(tmp_path: Path):
+    path = _write_base(tmp_path)
+    text = path.read_text()
+    path.write_text(
+        f"{text.rstrip()}\n"
+        "  - connection: [demo-not-mleaf-backup:Ethernet1, "
+        "demo-leaf1:Ethernet10]\n"
+    )
+
+    extend_topology(path, add="mleaf", pair=1)
+
+    assert ("demo-mleaf1", 1, "demo-leaf1", 7) in {
+        (
+            connection.a_node,
+            connection.a_port,
+            connection.b_node,
+            connection.b_port,
+        )
+        for connection in parse_connections(path.read_text())
+    }
+
+
 def test_l2_rejects_third_spine(tmp_path: Path):
     spec = FabricSpec(
         hostname_prefix="demo",

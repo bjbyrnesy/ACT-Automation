@@ -48,7 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     extend.add_argument(
         "--pair",
         type=int,
-        help="Leaf pair index for --add mleaf",
+        help=(
+            "1-based index over discovered MLAG peer-linked leaf pairs, "
+            "sorted by lowest leaf index"
+        ),
     )
     extend.add_argument(
         "--count",

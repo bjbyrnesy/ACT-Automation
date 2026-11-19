@@ -18,6 +18,7 @@ _NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
 _FABRIC_NODE_RE = re.compile(
     r"^(?P<prefix>.+)-(?P<role>spine|leaf|mleaf)(?P<index>[1-9]\d*)$"
 )
+_MLEAF_NAME_RE = re.compile(r"(?:^|-)mleaf[1-9]\d*$")
 _SERIAL_RE = re.compile(
     r"^[ \t]+serial_number:\s*(?P<prefix>\S+)-(?:spine|leaf|mleaf)[1-9]\d*\s*$",
     re.MULTILINE,
@@ -239,9 +240,43 @@ def _mleafs_for_pair(
     for connection in connections:
         endpoints = {connection.a_node, connection.b_node}
         for endpoint in endpoints:
-            if "-mleaf" in endpoint and endpoints & pair_leaves:
+            if _MLEAF_NAME_RE.search(endpoint) and endpoints & pair_leaves:
                 member_leaves.add(endpoint)
     return member_leaves
+
+
+def _leaf_pairs(
+    plan: PortPlan,
+    connections: list[Connection],
+    leaves: list[tuple[int, str, str]],
+) -> list[tuple[tuple[int, str], tuple[int, str]]]:
+    leaf_indexes = {name: index for index, name, _ in leaves}
+    mlag_ports = set(plan.leaf_mlag_ports())
+    peer_ports: dict[frozenset[str], set[tuple[int, int]]] = {}
+    for connection in connections:
+        if (
+            connection.a_node not in leaf_indexes
+            or connection.b_node not in leaf_indexes
+            or connection.a_port not in mlag_ports
+            or connection.b_port not in mlag_ports
+        ):
+            continue
+        key = frozenset((connection.a_node, connection.b_node))
+        if len(key) == 2:
+            peer_ports.setdefault(key, set()).add(
+                (connection.a_port, connection.b_port)
+            )
+
+    pairs: list[tuple[tuple[int, str], tuple[int, str]]] = []
+    for names, ports in peer_ports.items():
+        if (
+            len(ports) < len(mlag_ports)
+            or {port for link in ports for port in link} != mlag_ports
+        ):
+            continue
+        members = sorted((leaf_indexes[name], name) for name in names)
+        pairs.append((members[0], members[1]))
+    return sorted(pairs, key=lambda members: members[0][0])
 
 
 def extend_topology(
@@ -369,13 +404,10 @@ def extend_topology(
 
     else:
         assert pair is not None
-        odd_leaf_index = pair * 2 - 1
-        even_leaf_index = pair * 2
-        leaf_names = {index: name for index, name, _ in leaves}
-        if odd_leaf_index not in leaf_names or even_leaf_index not in leaf_names:
+        leaf_pairs = _leaf_pairs(plan, connections, leaves)
+        if pair > len(leaf_pairs):
             raise ValueError(f"leaf pair {pair} does not exist")
-        odd_name = leaf_names[odd_leaf_index]
-        even_name = leaf_names[even_leaf_index]
+        (_, odd_name), (_, even_name) = leaf_pairs[pair - 1]
         next_slot = len(_mleafs_for_pair(connections, odd_name, even_name)) + 1
         next_mleaf = max([0, *(item[0] for item in mleafs)]) + 1
         for offset in range(count):
