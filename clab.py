@@ -106,7 +106,7 @@ def validate_enrollment_token(token):
         fail(
             "CVAAS_TOKEN is a user/service-account API token (dst=account), not a "
             "device enrollment token. Generate one in CVaaS: Devices → Device "
-            "Registration → Generate a Token, then set CVAAS_TOKEN in .config."
+            "Registration → Generate a Token, then enter it at the prompt."
         )
     exp = payload.get("exp")
     if exp is not None:
@@ -602,6 +602,22 @@ def onboard_node(host, container, commands, attempts=5, delay=3.0, runtime="dock
     return last
 
 
+def enrollment_token(config):
+    cached = (config.get("CVAAS_TOKEN") or "").strip()
+    if cached:
+        try:
+            validate_enrollment_token(cached)
+        except ValueError:
+            print("Cached CVaaS enrollment token is expired or invalid; enter a new token.")
+        else:
+            return cached
+    token = getpass.getpass("CVaaS enrollment token: ").strip()
+    if not token or "\n" in token or "\r" in token:
+        fail("Enrollment token cannot be empty or contain newlines.")
+    validate_enrollment_token(token)
+    return token
+
+
 def onboard(args):
     lab = validate_lab(Path(args.topology))
     runtime = check_onboarding_host(args.host, lab, getattr(args, "runtime", None))
@@ -613,12 +629,7 @@ def onboard(args):
     )
     if not re.fullmatch(r"[A-Za-z0-9.-]+", endpoint):
         fail("Invalid CVaaS host.")
-    token = (config.get("CVAAS_TOKEN") or "").strip()
-    if not token:
-        token = getpass.getpass("CVaaS enrollment token: ").strip()
-    if not token or "\n" in token or "\r" in token:
-        fail("Enrollment token cannot be empty or contain newlines.")
-    validate_enrollment_token(token)
+    token = enrollment_token(config)
     encoded = base64.b64encode(token.encode()).decode()
     disableaaa = (
         args.disableaaa

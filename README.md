@@ -148,7 +148,9 @@ file as the shell scripts). CLI flags override. Useful keys: `CLAB_NAME`,
 `CLAB_MGMT_SUBNET`, `CLAB_MGMT_NETWORK`, `CLAB_DNS` (space-separated IPs),
 `CLAB_NTP` (space-separated IPs), `CLAB_DISABLEAAA` (`y`/`n` — adds
 `-disableaaa` to the initial TerminAttr onboarding exec), `CVAAS_HOST`,
-`CVAAS_TOKEN`.
+`CVAAS_TOKEN`. Containerlab onboarding uses a valid cached enrollment token and
+prompts if it is missing, expired, or invalid. A newly entered token is used
+for that run and is not written to `.config`.
 
 Generated labs use `172.100.100.0/22` on containerlab's default management
 network unless `--mgmt-subnet` is provided. Choose a non-overlapping subnet;
