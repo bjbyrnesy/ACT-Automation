@@ -42,3 +42,19 @@ def test_next_free_raises_at_hard_cap():
     used = set(range(1, 17))
     with pytest.raises(ValueError, match="16"):
         plan.next_free_port(used)
+
+
+def test_multi_dc_uplinks_sit_after_reserved_blocks():
+    plan = PortPlan(_cap(max_spines=4, max_leaves=8))
+    assert plan.spine_mlag_ports() == (9, 10)
+    assert plan.spine_uplink_ports() == (11, 12)
+    assert plan.border_mlag_ports() == (5, 6)
+    assert plan.border_bb_ports() == (7, 8)
+    assert plan.bb_border_port(1, 2) == 4
+    assert plan.bb_peer_port(2) == 5
+
+
+def test_l2_backbone_ports_use_reserved_spine_width():
+    plan = PortPlan(_cap(fabric_mode="l2", max_spines=2))
+    assert plan.bb_spine_port(1, 1) == 3
+    assert plan.bb_peer_port(3) == 7

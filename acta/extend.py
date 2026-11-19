@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from acta.capacity import Capacity, format_capacity_header, parse_capacity_header
-from acta.mac import generate_mac
+from acta.create import SITE_LETTERS, node_block
 from acta.portplan import PortPlan
 from acta.topology import Connection, parse_connections, used_ports_from_connections
 
@@ -18,7 +18,12 @@ _NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
 _FABRIC_NODE_RE = re.compile(
     r"^(?P<prefix>.+)-(?P<role>spine|leaf|mleaf)(?P<index>[1-9]\d*)$"
 )
+_BB_NODE_RE = re.compile(r"^(?P<prefix>.+)-bb1$")
 _MLEAF_NAME_RE = re.compile(r"(?:^|-)mleaf[1-9]\d*$")
+_BB_SERIAL_RE = re.compile(
+    r"^[ \t]+serial_number:\s*(?P<prefix>\S+)-bb1\s*$",
+    re.MULTILINE,
+)
 _SERIAL_RE = re.compile(
     r"^[ \t]+serial_number:\s*(?P<prefix>\S+)-(?:spine|leaf|mleaf)[1-9]\d*\s*$",
     re.MULTILINE,
@@ -27,10 +32,49 @@ _LINKS_RE = re.compile(r"^links:\s*$", re.MULTILINE)
 _DATA_PLANE_RE = re.compile(r"^#{10,}\n# Data-plane links\n#{10,}\n", re.MULTILINE)
 
 
-def _fabric_nodes(text: str, role: str) -> list[tuple[int, str, str]]:
+def _multi_dc_prefix(text: str) -> str | None:
+    """Return the hostname prefix when the topology has a backbone (multi-DC)."""
+    for node_match in _NODE_RE.finditer(text):
+        bb_match = _BB_NODE_RE.fullmatch(node_match.group("name"))
+        if bb_match is not None:
+            return bb_match.group("prefix")
+    return None
+
+
+def _sites(text: str, hostname_prefix: str) -> list[str]:
+    site_re = re.compile(
+        rf"^{re.escape(hostname_prefix)}-(?P<site>[A-D])-"
+        r"(?:border|spine|leaf|mleaf)[1-9]\d*$"
+    )
+    found = {
+        match.group("site")
+        for node_match in _NODE_RE.finditer(text)
+        if (match := site_re.fullmatch(node_match.group("name"))) is not None
+    }
+    return sorted(found)
+
+
+def _fabric_nodes(
+    text: str,
+    role: str,
+    *,
+    hostname_prefix: str | None = None,
+    site: str | None = None,
+) -> list[tuple[int, str, str]]:
+    """List ``(index, name, prefix)``; multi-DC passes prefix and site to scope."""
     nodes: list[tuple[int, str, str]] = []
+    scoped_re = (
+        re.compile(rf"^{re.escape(hostname_prefix)}-{site}-{role}(?P<index>[1-9]\d*)$")
+        if hostname_prefix is not None and site is not None
+        else None
+    )
     for node_match in _NODE_RE.finditer(text):
         name = node_match.group("name")
+        if scoped_re is not None:
+            scoped_match = scoped_re.fullmatch(name)
+            if scoped_match is not None:
+                nodes.append((int(scoped_match.group("index")), name, hostname_prefix))
+            continue
         identity_match = _FABRIC_NODE_RE.fullmatch(name)
         if identity_match is None or identity_match.group("role") != role:
             continue
@@ -70,19 +114,9 @@ def _node_yaml(
     serial_prefix: str,
     role: str,
     index: int,
+    site: str | None = None,
 ) -> str:
-    address_base = {"spine": 10, "leaf": 20, "mleaf": 130}[role]
-    identity = f"{role}{index}"
-    return "\n".join(
-        [
-            f"  - {hostname_prefix}-{identity}:",
-            "      node_type: veos",
-            f"      ip_addr: 192.168.0.{address_base + index}/24",
-            f"      serial_number: {serial_prefix}-{identity}",
-            f"      system_mac_address: {generate_mac(serial_prefix, identity)}",
-            "      ztp: false",
-        ]
-    )
+    return "\n".join(node_block(hostname_prefix, serial_prefix, role, index, site))
 
 
 def _insert_node(text: str, node_yaml: str) -> str:
@@ -230,6 +264,44 @@ def _spine_mesh_connections(
     return new_connections
 
 
+def _spine_uplink_connections(
+    plan: PortPlan,
+    connections: list[Connection],
+    stem: str,
+    site: str,
+    spine_name: str,
+    spine_index: int,
+) -> list[Connection]:
+    """Link a new multi-DC spine to its site's borders (l3ls) or the bbs (l2)."""
+    site_index = SITE_LETTERS.index(site)
+    hostname_prefix = stem.removesuffix(f"-{site}")
+    new_connections: list[Connection] = []
+    for peer_number, spine_port_preferred in enumerate(
+        plan.spine_uplink_ports(), start=1
+    ):
+        if plan.capacity.fabric_mode == "l3ls":
+            peer_name = f"{stem}-border{peer_number}"
+            peer_preferred = plan.border_to_spine_port(spine_index)
+        else:
+            peer_name = f"{hostname_prefix}-bb{peer_number}"
+            peer_preferred = plan.bb_spine_port(site_index, spine_index)
+        spine_port = _allocate_port(
+            plan,
+            used_ports_from_connections(connections, spine_name),
+            spine_port_preferred,
+            spine_name,
+        )
+        peer_port = _allocate_port(
+            plan,
+            used_ports_from_connections(connections, peer_name),
+            peer_preferred,
+            peer_name,
+        )
+        new_connections.append(Connection(peer_name, peer_port, spine_name, spine_port))
+        connections.append(new_connections[-1])
+    return new_connections
+
+
 def _mleafs_for_pair(
     connections: list[Connection],
     odd_leaf_name: str,
@@ -289,8 +361,11 @@ def extend_topology(
     out: Path | None = None,
     new: bool = False,
 ) -> Path:
-    """Extend an ACT topology without changing existing link endpoints."""
-    del site
+    """Extend an ACT topology without changing existing link endpoints.
+
+    Multi-DC topologies (backbone present) require ``site``; every operation
+    then touches only that site's nodes and its own border/backbone ports.
+    """
     if add not in {"leaf", "spine", "pair", "mleaf"}:
         raise ValueError(f"unsupported extension type: {add!r}")
     if count < 1:
@@ -303,20 +378,50 @@ def extend_topology(
     text = path.read_text(encoding="utf-8")
     capacity = parse_capacity_header(text)
     original_connections = parse_connections(text)
-    spines = _fabric_nodes(text, "spine")
-    leaves = _fabric_nodes(text, "leaf")
-    mleafs = _fabric_nodes(text, "mleaf")
+    multi_prefix = _multi_dc_prefix(text)
+    site_name: str | None = None
+    if multi_prefix is None:
+        if site is not None:
+            raise ValueError(
+                "--site is only valid for multi-DC topologies, not single-site"
+            )
+        spines = _fabric_nodes(text, "spine")
+        leaves = _fabric_nodes(text, "leaf")
+        mleafs = _fabric_nodes(text, "mleaf")
+        serial_match = _SERIAL_RE.search(text)
+    else:
+        available = _sites(text, multi_prefix)
+        if site is None:
+            raise ValueError(
+                "multi-DC topology requires --site "
+                f"(available: {', '.join(available)})"
+            )
+        site_name = site.upper()
+        if site_name not in available:
+            raise ValueError(
+                f"site {site_name} not found (available: {', '.join(available)})"
+            )
+        scope = {"hostname_prefix": multi_prefix, "site": site_name}
+        spines = _fabric_nodes(text, "spine", **scope)
+        leaves = _fabric_nodes(text, "leaf", **scope)
+        mleafs = _fabric_nodes(text, "mleaf", **scope)
+        serial_match = _BB_SERIAL_RE.search(text)
     if not spines:
         raise ValueError("topology has no spine nodes")
     hostname_prefixes = {prefix for _, _, prefix in [*spines, *leaves, *mleafs]}
     if len(hostname_prefixes) != 1:
         raise ValueError("topology fabric node prefixes are inconsistent")
-    serial_match = _SERIAL_RE.search(text)
     if serial_match is None:
         raise ValueError("topology has no recognizable fabric serial number")
 
     hostname_prefix = hostname_prefixes.pop()
     serial_prefix = serial_match.group("prefix")
+    # Node-name stem including site, e.g. "demo-B" (multi-DC) or "demo".
+    stem = hostname_prefix if site_name is None else f"{hostname_prefix}-{site_name}"
+    # Header counts are per-fabric in single-DC; multi-DC sites diverge, so
+    # indices come from the site's nodes and the header stays the create baseline.
+    base_leaves = capacity.leaves if site_name is None else 0
+    base_spines = capacity.spines if site_name is None else 0
     plan = PortPlan(capacity)
     connections = list(original_connections)
     updated_text = text
@@ -325,14 +430,14 @@ def extend_topology(
 
     if add in {"leaf", "pair"}:
         leaves_to_add = count if add == "leaf" else count * 2
-        next_leaf = max([capacity.leaves, *(item[0] for item in leaves)]) + 1
+        next_leaf = max([base_leaves, *(item[0] for item in leaves)]) + 1
         added_leaf_names: list[str] = []
         for leaf_index in range(next_leaf, next_leaf + leaves_to_add):
             if leaf_index > capacity.max_leaves:
                 _warn_soft_capacity(
                     f"leaf{leaf_index}", "max_leaves", capacity.max_leaves
                 )
-            leaf_name = f"{hostname_prefix}-leaf{leaf_index}"
+            leaf_name = f"{stem}-leaf{leaf_index}"
             new_connections = _leaf_mesh_connections(
                 plan,
                 connections,
@@ -342,7 +447,9 @@ def extend_topology(
             )
             updated_text = _insert_node(
                 updated_text,
-                _node_yaml(hostname_prefix, serial_prefix, "leaf", leaf_index),
+                _node_yaml(
+                    hostname_prefix, serial_prefix, "leaf", leaf_index, site_name
+                ),
             )
             updated_text = _append_connections(updated_text, new_connections)
             added_leaf_names.append(leaf_name)
@@ -377,9 +484,10 @@ def extend_topology(
                 updated_text = _append_connections(updated_text, peer_connections)
 
     elif add == "spine":
-        if capacity.fabric_mode == "l2" and capacity.spines >= 2:
+        current_spines = max([base_spines, *(item[0] for item in spines)])
+        if capacity.fabric_mode == "l2" and current_spines >= 2:
             raise ValueError("L2 fabrics cannot have more than 2 spines")
-        next_spine = max([capacity.spines, *(item[0] for item in spines)]) + 1
+        next_spine = max([base_spines, *(item[0] for item in spines)]) + 1
         if capacity.fabric_mode == "l2" and next_spine + count - 1 > 2:
             raise ValueError("L2 fabrics cannot have more than 2 spines")
         for spine_index in range(next_spine, next_spine + count):
@@ -387,7 +495,7 @@ def extend_topology(
                 _warn_soft_capacity(
                     f"spine{spine_index}", "max_spines", capacity.max_spines
                 )
-            spine_name = f"{hostname_prefix}-spine{spine_index}"
+            spine_name = f"{stem}-spine{spine_index}"
             new_connections = _spine_mesh_connections(
                 plan,
                 connections,
@@ -395,9 +503,22 @@ def extend_topology(
                 spine_name,
                 spine_index,
             )
+            if site_name is not None:
+                new_connections.extend(
+                    _spine_uplink_connections(
+                        plan,
+                        connections,
+                        stem,
+                        site_name,
+                        spine_name,
+                        spine_index,
+                    )
+                )
             updated_text = _insert_node(
                 updated_text,
-                _node_yaml(hostname_prefix, serial_prefix, "spine", spine_index),
+                _node_yaml(
+                    hostname_prefix, serial_prefix, "spine", spine_index, site_name
+                ),
             )
             updated_text = _append_connections(updated_text, new_connections)
             spines_added += 1
@@ -419,7 +540,7 @@ def extend_topology(
                     capacity.max_mleafs_per_pair,
                 )
             mleaf_index = next_mleaf + offset
-            mleaf_name = f"{hostname_prefix}-mleaf{mleaf_index}"
+            mleaf_name = f"{stem}-mleaf{mleaf_index}"
             preferred_leaf_port = plan.leaf_mleaf_port(slot)
             odd_port = _allocate_port(
                 plan,
@@ -439,17 +560,20 @@ def extend_topology(
             ]
             updated_text = _insert_node(
                 updated_text,
-                _node_yaml(hostname_prefix, serial_prefix, "mleaf", mleaf_index),
+                _node_yaml(
+                    hostname_prefix, serial_prefix, "mleaf", mleaf_index, site_name
+                ),
             )
             updated_text = _append_connections(updated_text, mleaf_connections)
             connections.extend(mleaf_connections)
 
-    updated_capacity = replace(
-        capacity,
-        leaves=capacity.leaves + leaves_added,
-        spines=capacity.spines + spines_added,
-    )
-    updated_text = _replace_capacity(updated_text, updated_capacity)
+    if site_name is None:
+        updated_capacity = replace(
+            capacity,
+            leaves=capacity.leaves + leaves_added,
+            spines=capacity.spines + spines_added,
+        )
+        updated_text = _replace_capacity(updated_text, updated_capacity)
     before = {
         (connection.a_node, connection.a_port, connection.b_node, connection.b_port)
         for connection in original_connections

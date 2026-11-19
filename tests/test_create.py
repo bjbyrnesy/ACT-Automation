@@ -133,7 +133,7 @@ def test_emit_uses_reserved_member_leaf_ports():
     assert "connection: [demo-mleaf2:Ethernet2, demo-leaf2:Ethernet8]" in text
 
 
-def test_emit_rejects_multi_dc():
+def test_emit_rejects_multi_dc_without_fabric_mode():
     spec = FabricSpec(
         hostname_prefix="demo",
         serial_prefix="demo",
@@ -152,7 +152,7 @@ def test_emit_rejects_multi_dc():
         member_leaves_per_pair=0,
     )
 
-    with pytest.raises(ValueError, match="single-DC"):
+    with pytest.raises(ValueError, match="fabric_mode"):
         emit_act_yaml(replace(spec, dc_count=2))
 
 
@@ -177,3 +177,84 @@ def test_emit_rejects_service_ports_above_hard_cap():
 
     with pytest.raises(ValueError, match="16.*hard cap"):
         emit_act_yaml(spec)
+
+
+def _multi_dc_spec(fabric_mode: str, **kwargs) -> FabricSpec:
+    return FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity(
+            fabric_mode=fabric_mode,
+            max_spines=2 if fabric_mode == "l2" else 4,
+            max_leaves=8,
+            max_mleafs_per_pair=0,
+            spines=2,
+            leaves=2,
+        ),
+        mlag_pairs=True,
+        spine_mlag=kwargs.pop("spine_mlag", False),
+        member_leaf_pairs=[],
+        member_leaves_per_pair=0,
+        dc_count=kwargs.pop("dc_count", 2),
+    )
+
+
+def _endpoints(text: str) -> set[tuple[str, int, str, int]]:
+    return {(c.a_node, c.a_port, c.b_node, c.b_port) for c in parse_connections(text)}
+
+
+def test_multi_dc_l3ls_emit_has_border_and_bb():
+    text = emit_act_yaml(_multi_dc_spec("l3ls"))
+    assert "demo-A-border1:" in text
+    assert "demo-bb1:" in text
+
+
+def test_multi_dc_l3ls_ports_follow_reserved_blocks():
+    spec = _multi_dc_spec("l3ls", spine_mlag=True)
+    text = emit_act_yaml(spec)
+    links = _endpoints(text)
+    # border <-> spine uses spine ports after max_leaves + spine MLAG block.
+    assert ("demo-B-border1", 2, "demo-B-spine2", 11) in links
+    assert ("demo-B-border2", 2, "demo-B-spine2", 12) in links
+    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) in links
+    # border MLAG peer then border <-> bb after max_spines.
+    assert ("demo-A-border1", 5, "demo-A-border2", 5) in links
+    assert ("demo-A-border1", 7, "demo-bb1", 1) in links
+    assert ("demo-B-border2", 8, "demo-bb2", 4) in links
+    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+    # leaf mesh and MLAG are unchanged per site.
+    assert ("demo-B-spine1", 2, "demo-B-leaf2", 1) in links
+    assert ("demo-B-leaf1", 5, "demo-B-leaf2", 5) in links
+
+
+def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
+    text = emit_act_yaml(_multi_dc_spec("l2"))
+    assert "border" not in text
+    links = _endpoints(text)
+    assert ("demo-A-spine1", 11, "demo-bb1", 1) in links
+    assert ("demo-A-spine2", 12, "demo-bb2", 2) in links
+    assert ("demo-B-spine1", 11, "demo-bb1", 3) in links
+    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+
+
+def test_multi_dc_leaf_growth_does_not_move_uplinks():
+    small = emit_act_yaml(_multi_dc_spec("l3ls"))
+    grown_spec = _multi_dc_spec("l3ls")
+    grown = emit_act_yaml(
+        replace(grown_spec, capacity=replace(grown_spec.capacity, leaves=4))
+    )
+    uplinks = {
+        link for link in _endpoints(small) if "border" in link[0] or "bb" in link[0]
+    }
+    assert uplinks <= _endpoints(grown)
+
+
+def test_multi_dc_rejects_bad_mode_and_uplink_overflow():
+    with pytest.raises(ValueError, match="dc_count"):
+        emit_act_yaml(_multi_dc_spec("l3ls", dc_count=5))
+    spec = _multi_dc_spec("l3ls")
+    with pytest.raises(ValueError, match="fabric_mode"):
+        emit_act_yaml(replace(spec, capacity=replace(spec.capacity, fabric_mode=None)))
+    with pytest.raises(ValueError, match="hard cap"):
+        emit_act_yaml(replace(spec, capacity=replace(spec.capacity, max_leaves=13)))

@@ -44,7 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="What to add",
     )
-    extend.add_argument("--site", help="Site letter for a multi-site topology")
+    extend.add_argument(
+        "--site",
+        help=(
+            "Site letter (A-D); required for multi-DC topologies, "
+            "scopes the extension to that site"
+        ),
+    )
     extend.add_argument(
         "--pair",
         type=int,
