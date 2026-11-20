@@ -5,9 +5,9 @@ day-2 helpers to **show** the fabric, **attach** jumphosts, **ssh** into nodes,
 and onboard switches to **CVaaS**.
 
 ```text
-acta.py act  {create,extend,upload,onboard}     # ACT / vEOS
-acta.py clab {generate,deploy,destroy,redeploy,onboard}  # containerlab / cEOS
-acta.py show | attach | ssh                     # day-2 (both platforms)
+acta.py act  {create,extend,upload,onboard}              # ACT / vEOS
+acta.py clab {create,generate,deploy,destroy,redeploy,onboard,show}
+acta.py show | attach | ssh                              # day-2 (both platforms)
 ```
 
 Examples assume an activated venv (see [Install](#install)). Use `acta …` or
@@ -64,8 +64,9 @@ python acta.py act create
 python acta.py act upload topology-….yml
 python acta.py act onboard
 
-# containerlab path (same create, or --for clab|both)
-python acta.py act create --for both --name mylab --image ceos:4.35.4M
+# containerlab path (interactive create under clab — equal noun)
+python acta.py clab create --name mylab --image ceos:4.35.4M
+# or both outputs: acta act create --for both --name mylab --image ceos:4.35.4M
 python acta.py clab deploy mylab.clab.yml          # or --from-act …
 python acta.py clab onboard mylab.clab.yml --endpoint apiserver.arista.io
 
@@ -87,6 +88,7 @@ acta clab redeploy mylab.clab.yml        # after attach/extend
 | `act extend` | Add leaf / mleaf / … on unused ports only |
 | `act upload` | Push YAML to ACT; optional lab create/deploy |
 | `act onboard` | Running ACT lab → CVaaS (SSH + TerminAttr on **vEOS** only) |
+| `clab create` | Same interactive create; defaults to clab (`--for clab\|both`). Still writes an ACT YAML sibling as the fabric source for extend/generate |
 | `clab generate` | ACT YAML → project `.clab.yml` + configs / annotations |
 | `clab deploy` | Deploy under `~/.act-automation/clab/<name>/` (local or `--host`) |
 | `clab destroy` | Tear down a deployed lab (does not regenerate sibling YAML) |
