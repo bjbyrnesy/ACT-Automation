@@ -26,23 +26,35 @@ This is *not* a tool to build any possible iteration of a network topology in AC
 
 ```bash
 uv sync --extra dev
+uv run pre-commit install --install-hooks   # local secret + lint gates
 ```
 
 Optional: Graphviz `dot` — if installed, `create` and `extend` also write or refresh a PNG beside the topology YAML.
 
 ### CI & security
 
-GitHub Actions on every PR/push to `main` (no repo-admin rights required):
+**Local (pre-commit)** — runs on every `git commit` / `git push`:
 
-- **CI** — Black, Ruff, Pytest (`uv`)
-- **Security** — Gitleaks (secrets), CodeQL, zizmor (workflow audit), Trivy (fs vulns/secrets)
+- Gitleaks (staged secrets on commit; full scan on push)
+- Block `.config` / `.env` / `secrets.*` / `credentials.json` even if force-added
+- detect-private-key, detect-aws-credentials
+- Black + Ruff
+
+```bash
+uv run pre-commit run --all-files   # manual full check
+```
+
+**GitHub Actions** on every PR/push to `main` (no repo-admin rights required):
+
+- **CI** — same pre-commit suite + Pytest
+- **Security** — Gitleaks, CodeQL, zizmor, Trivy
 - **Dependabot** — weekly Actions + pip updates
 
 Never commit `.config`, `.env`, or enrollment tokens; they stay gitignored.
 
-GitHub’s built-in Secret scanning / Push protection and Dependency graph need an
-**owner/admin**. As a collaborator, rely on Gitleaks + Trivy on PRs; ask the owner
-only if you also want native Security-tab alerts.
+GitHub’s built-in Secret scanning / Push protection need an **owner/admin**. As a
+collaborator, pre-commit + Gitleaks CI are the leak shields; ask the owner only
+if you also want native Security-tab alerts.
 
 ## Quickstart 🏎️
 
@@ -415,7 +427,8 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 | ---- | ------- |
 | `acta.py` | CLI entrypoint: `act`, `clab`, `show`, `attach`. |
 | `acta/` | Python package (create/extend/upload/onboard/attach/show + containerlab). |
-| `pyproject.toml` | Project metadata; Python ≥3.15; `uv sync --extra dev` for pytest/ruff/black. |
+| `pyproject.toml` | Project metadata; Python ≥3.15; `uv sync --extra dev` for pytest/ruff/black/pre-commit. |
+| `.pre-commit-config.yaml` | Local commit/push hooks (gitleaks + lint). Run `uv run pre-commit install`. |
 | `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `acta.py act create`. Filename must be unique across the ACT tenant. |
 | `.config` | Auto-generated cache of your answers (ACT/CVaaS + optional `CLAB_*`). **gitignored.** Delete to re-prompt. |
 

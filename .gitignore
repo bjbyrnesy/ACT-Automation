@@ -51,6 +51,7 @@ topology*
 
 *.yaml
 !.github/**/*.yaml
+!.pre-commit-config.yaml
 
 *.annotations.json
 *.eos

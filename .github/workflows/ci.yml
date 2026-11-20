@@ -37,11 +37,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --extra dev
 
-      - name: Black
-        run: uv run black --check acta tests
-
-      - name: Ruff
-        run: uv run ruff check acta tests
+      - name: Pre-commit (gitleaks, black, ruff, …)
+        run: uv run pre-commit run --all-files
 
       - name: Pytest
         run: uv run pytest -q --tb=short
