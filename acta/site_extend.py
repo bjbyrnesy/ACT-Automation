@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 from acta.capacity import (
     Capacity,
@@ -12,6 +13,7 @@ from acta.capacity import (
     parse_capacity_header,
 )
 from acta.create import node_address, node_block
+from acta.extend import ExtendResult, _new_output_path, _write_atomic
 from acta.mac import generate_mac
 from acta.portplan import PortPlan, site_ordinal
 from acta.site_names import (
@@ -21,6 +23,12 @@ from acta.site_names import (
     validate_site_token,
 )
 from acta.topology import Connection
+
+# Live blz2 quiet-lab rule of thumb: ~1.53 GiB RSS/cEOS, ~1.8× for VM overhead.
+_RAM_GIB_PER_CEOS = 1.8
+_RAM_EVPN_LOW = 1.5
+_RAM_EVPN_HIGH = 1.75
+CEOS_CONFIRM_THRESHOLD = 24
 
 _NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
 _NODE_BLOCK_RE = re.compile(
@@ -680,11 +688,168 @@ def projected_ceos_count(capacity: Capacity, site_count: int) -> int:
     return per_site * site_count + capacity.bb_count
 
 
+def ram_range_gib(ceos_count: int) -> tuple[float, float]:
+    """Return (baseline, EVPN-high) host GiB estimates for ``ceos_count`` nodes."""
+    baseline = _RAM_GIB_PER_CEOS * ceos_count
+    return (baseline * _RAM_EVPN_LOW, baseline * _RAM_EVPN_HIGH)
+
+
+def ram_range_message(ceos_count: int) -> str:
+    """Human-readable baseline→EVPN RAM range for site-add messaging."""
+    low, high = ram_range_gib(ceos_count)
+    return (
+        f"Estimated host RAM for {ceos_count} cEOS: "
+        f"~{low:.0f}–{high:.0f} GiB (baseline→EVPN range)"
+    )
+
+
+def next_steps_message(*, for_clab: bool = False) -> str:
+    """ACT vs clab next-step hint after writing a new topology file."""
+    if for_clab:
+        return (
+            "Next: regenerate/deploy the containerlab lab from this topology "
+            "(fresh cEOS set; re-onboard to CVP if used)."
+        )
+    return (
+        "Next: acta.py act upload TOPOLOGY --deploy (fresh ACT lab; "
+        "re-onboard devices in CVP — serials preserved only reduce ghost clutter)."
+    )
+
+
+@dataclass(frozen=True)
+class SiteExtendResult:
+    """Outcome of ``extend --add site`` including RAM/next-step messaging."""
+
+    path: Path
+    added_nodes: tuple[str, ...]
+    warnings: tuple[str, ...]
+    ceos_count: int
+    promoted: bool
+    messages: tuple[str, ...]
+
+    def as_extend_result(self) -> ExtendResult:
+        return ExtendResult(
+            path=self.path,
+            added_nodes=self.added_nodes,
+            warnings=self.warnings,
+            free_leaves=0,
+            free_spines=0,
+            free_mleaf_slots=(),
+        )
+
+
+def extend_add_site(
+    path: Path,
+    site_name: str,
+    *,
+    first_site: str | None = None,
+    rekey_identity: bool = False,
+    bb_redundancy: str | None = None,
+    border_redundancy: str | None = None,
+    bb_count: int | None = None,
+    border_count: int | None = None,
+    force: bool = False,
+    out: Path | None = None,
+    confirm: bool = True,
+) -> SiteExtendResult:
+    """Promote if needed, add ``site_name``, always write a new dated file.
+
+    When ``confirm`` is true and projected cEOS exceed
+    :data:`CEOS_CONFIRM_THRESHOLD`, raises ``ValueError`` unless ``force``.
+    """
+    text = path.read_text(encoding="utf-8")
+    mode = path.stat().st_mode & 0o777
+    site = validate_site_token(site_name)
+    promoted = not _has_backbone(text)
+    before_nodes = set(_node_names(text))
+    if promoted:
+        # --name alone renames the existing fabric; --first-site + --name
+        # promotes then adds a second site in one shot.
+        promote_site = validate_site_token(first_site) if first_site else site
+        text = ensure_multi_dc(
+            text,
+            first_site=promote_site,
+            rekey_identity=rekey_identity,
+            bb_redundancy=bb_redundancy,
+            border_redundancy=border_redundancy,
+            bb_count=bb_count,
+            border_count=border_count,
+        )
+        if first_site is not None:
+            text = add_site(text, site)
+    else:
+        if any(
+            value is not None
+            for value in (bb_redundancy, border_redundancy, bb_count, border_count)
+        ):
+            raise ValueError(
+                "bb/border redundancy flags apply only when promoting "
+                "a single-site topology"
+            )
+        if first_site is not None:
+            raise ValueError(
+                "--first-site is only valid when promoting a single-site topology"
+            )
+        text = add_site(text, site)
+    after_nodes = set(_node_names(text))
+    added = tuple(sorted(after_nodes - before_nodes))
+
+    capacity = parse_capacity_header(text)
+    hostname_prefix = _detect_hostname_prefix(text)
+    site_count = len(list_sites(text, hostname_prefix))
+    ceos_count = projected_ceos_count(capacity, site_count)
+    warnings: list[str] = []
+    if ceos_count > CEOS_CONFIRM_THRESHOLD and not force:
+        if confirm:
+            raise ValueError(
+                f"projected {ceos_count} cEOS exceeds comfortable ~"
+                f"{CEOS_CONFIRM_THRESHOLD} on a 64 GiB lab; "
+                "re-run with --force to continue"
+            )
+        warnings.append(
+            f"projected {ceos_count} cEOS exceeds ~{CEOS_CONFIRM_THRESHOLD}; "
+            "continuing because confirmation was skipped"
+        )
+
+    if out is not None:
+        if out.exists():
+            raise FileExistsError(f"output path already exists: {out}")
+        destination = out
+    else:
+        destination = _new_output_path(path)
+
+    _write_atomic(destination, text, mode)
+    messages = (
+        ram_range_message(ceos_count),
+        next_steps_message(),
+    )
+    if promoted:
+        promote_label = validate_site_token(first_site) if first_site else site
+        messages = (
+            f"Promoted single-site fabric to site {promote_label!r} + backbone hub.",
+            *messages,
+        )
+    return SiteExtendResult(
+        path=destination,
+        added_nodes=added,
+        warnings=tuple(warnings),
+        ceos_count=ceos_count,
+        promoted=promoted,
+        messages=messages,
+    )
+
+
 __all__ = [
+    "CEOS_CONFIRM_THRESHOLD",
     "MAX_SITES",
+    "SiteExtendResult",
     "add_site",
     "ensure_multi_dc",
+    "extend_add_site",
     "list_sites",
+    "next_steps_message",
     "projected_ceos_count",
+    "ram_range_gib",
+    "ram_range_message",
     "site_ordinal",
 ]

@@ -44,7 +44,7 @@ def _multi_dc_prefix(text: str) -> str | None:
 
 def _sites(text: str, hostname_prefix: str) -> list[str]:
     site_re = re.compile(
-        rf"^{re.escape(hostname_prefix)}-(?P<site>[A-D])-"
+        rf"^{re.escape(hostname_prefix)}-(?P<site>[A-Za-z0-9][A-Za-z0-9_-]*)-"
         r"(?:border|spine|leaf|mleaf)[1-9]\d*$"
     )
     found = {
@@ -598,11 +598,12 @@ def extend_topology(
                 "multi-DC topology requires --site "
                 f"(available: {', '.join(available)})"
             )
-        site_name = site.upper()
-        if site_name not in available:
+        available_map = {name.casefold(): name for name in available}
+        if site.casefold() not in available_map:
             raise ValueError(
-                f"site {site_name} not found (available: {', '.join(available)})"
+                f"site {site} not found (available: {', '.join(available)})"
             )
+        site_name = available_map[site.casefold()]
         scope = {"hostname_prefix": multi_prefix, "site": site_name}
         spines = _fabric_nodes(text, "spine", **scope)
         leaves = _fabric_nodes(text, "leaf", **scope)

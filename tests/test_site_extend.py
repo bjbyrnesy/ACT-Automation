@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -234,3 +235,18 @@ def test_add_site_evpn_aa_allows_eight_sites():
 def test_add_site_rejects_single_site_without_promote():
     with pytest.raises(ValueError, match="not multi-DC"):
         add_site(_single("l3ls"), "aus")
+
+
+def test_extend_add_site_promotes_and_writes_new_file(tmp_path: Path):
+    from acta.site_extend import extend_add_site
+
+    source = tmp_path / "lab.yml"
+    source.write_text(_single("l3ls"))
+    result = extend_add_site(source, "aus", force=True)
+    assert result.path != source
+    assert result.path.exists()
+    assert result.promoted
+    text = result.path.read_text()
+    assert "demo-aus-spine1:" in text
+    assert "demo-bb1:" in text
+    assert source.read_text() == _single("l3ls")

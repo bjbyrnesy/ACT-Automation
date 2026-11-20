@@ -48,6 +48,23 @@ def test_create_help_mentions_for_target():
     assert "clab" in proc.stdout
 
 
+def test_extend_help_lists_add_site_and_flags():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "act", "extend", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    out = proc.stdout
+    assert "site" in out
+    assert "--name" in out
+    assert "--first-site" in out
+    assert "--rekey-identity" in out
+    assert "--force" in out
+    assert "--bb-redundancy" in out
+
+
 def test_upload_help_mentions_topology():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "acta.py"), "act", "upload", "--help"],
