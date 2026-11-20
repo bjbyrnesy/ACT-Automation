@@ -32,15 +32,17 @@ Optional: Graphviz `dot` — if installed, `create` and `extend` also write or r
 
 ### CI & security
 
-GitHub Actions on every PR/push to `main`:
+GitHub Actions on every PR/push to `main` (no repo-admin rights required):
 
 - **CI** — Black, Ruff, Pytest (`uv`)
-- **Security** — Gitleaks (secrets), Dependency Review, CodeQL (Python + Actions), zizmor (workflow audit), Trivy (fs vulns/secrets)
+- **Security** — Gitleaks (secrets), CodeQL, zizmor (workflow audit), Trivy (fs vulns/secrets)
 - **Dependabot** — weekly Actions + pip updates
 
 Never commit `.config`, `.env`, or enrollment tokens; they stay gitignored.
 
-**PR checks work without repo-admin rights** (Gitleaks, zizmor, Trivy, CI). GitHub’s built-in Secret scanning / Push protection, Dependency graph, and Code scanning alerts need an **owner/admin** to enable under Settings → Code security — ask them if you want those extras; Gitleaks already blocks leaked secrets on PRs without that.
+GitHub’s built-in Secret scanning / Push protection and Dependency graph need an
+**owner/admin**. As a collaborator, rely on Gitleaks + Trivy on PRs; ask the owner
+only if you also want native Security-tab alerts.
 
 ## Quickstart 🏎️
 
