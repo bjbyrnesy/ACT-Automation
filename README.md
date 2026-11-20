@@ -10,7 +10,8 @@ acta.py clab {generate,deploy,destroy,redeploy,onboard}  # containerlab / cEOS
 acta.py show | attach | ssh                     # day-2 (both platforms)
 ```
 
-All commands: `uv run python acta.py …` (Python 3.15+, [uv](https://docs.astral.sh/uv/)).
+Examples assume an activated venv (see [Install](#install)). Use `acta …` or
+`python acta.py …`.
 
 ## Why this exists
 
@@ -29,35 +30,51 @@ topology.
 
 ## Install
 
+Needs **Python 3.15+**.
+
+### Install uv
+
 ```bash
-uv sync --extra dev
-uv run pre-commit install --install-hooks   # gitleaks + lint on commit/push
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# or: brew install uv
+# Windows: winget install astral-sh.uv
+#   or: irm https://astral.sh/uv/install.ps1 | iex
 ```
 
-Optional: [Graphviz](https://graphviz.org/) `dot` for PNG diagrams
-(`brew install graphviz` / `winget install -e --id Graphviz.Graphviz`).
+### Install dependencies and activate the venv
 
-Never commit `.config` or `.env` (gitignored; pre-commit blocks them).
+```bash
+cd ACT-Automation
+uv sync --extra dev                 # creates .venv and installs deps + acta
+source .venv/bin/activate           # macOS / Linux / WSL
+# .venv\Scripts\activate            # Windows
+```
+
+After activate, `acta` is on `PATH` (or use `python acta.py`). Optional:
+`pre-commit install --install-hooks`. Graphviz `dot` is optional for PNG diagrams
+(`brew install graphviz`). Never commit `.config` or `.env`.
 
 ## Quickstart
 
 ```bash
 # ACT path
-uv run python acta.py act create
-uv run python acta.py act upload topology-….yml
-uv run python acta.py act onboard
+python acta.py act create
+python acta.py act upload topology-….yml
+python acta.py act onboard
 
 # containerlab path (same create, or --for clab|both)
-uv run python acta.py act create --for both --name mylab --image ceos:4.35.4M
-uv run python acta.py clab deploy mylab.clab.yml          # or --from-act …
-uv run python acta.py clab onboard mylab.clab.yml --endpoint apiserver.arista.io
+python acta.py act create --for both --name mylab --image ceos:4.35.4M
+python acta.py clab deploy mylab.clab.yml          # or --from-act …
+python acta.py clab onboard mylab.clab.yml --endpoint apiserver.arista.io
 
 # Day-2
-uv run python acta.py show topology-….yml
-uv run python acta.py attach host jump1 topology-….yml --mlag-pair 1 --et 11
-uv run python acta.py ssh jump1
-uv run python acta.py ssh A-leaf1 -- show hostname
-uv run python acta.py clab redeploy mylab.clab.yml        # after attach/extend
+acta show topology-….yml
+acta attach host jump1 topology-….yml --mlag-pair 1 --et 11
+acta ssh jump1
+acta ssh A-leaf1 -- show hostname
+acta clab redeploy mylab.clab.yml        # after attach/extend
 ```
 
 ---
@@ -86,8 +103,8 @@ uv run python acta.py clab redeploy mylab.clab.yml        # after attach/extend
 ### Create
 
 ```bash
-uv run python acta.py act create
-uv run python acta.py act create --for both --name mylab --image ceos:4.35.4M
+python acta.py act create
+python acta.py act create --for both --name mylab --image ceos:4.35.4M
 ```
 
 Prompts cover serial/hostname prefix, site count, spines/leaves, MLAG, member-leaves,
@@ -106,8 +123,8 @@ Default comes from `CREATE_FOR` in `.config` when set.
 ### Extend
 
 ```bash
-uv run python acta.py act extend topology-….yml --add leaf
-uv run python acta.py act extend topology-….yml --add mleaf --pair 1
+python acta.py act extend topology-….yml --add leaf
+python acta.py act extend topology-….yml --add mleaf --pair 1
 ```
 
 - **Soft max:** capacity header. Past soft max → warning; still ≤ Ethernet16.
@@ -119,8 +136,8 @@ uv run python acta.py act extend topology-….yml --add mleaf --pair 1
 ### Upload + onboard
 
 ```bash
-uv run python acta.py act upload topology-….yml
-uv run python acta.py act onboard
+python acta.py act upload topology-….yml
+python acta.py act onboard
 ```
 
 Need an ACT API key (UI → profile) and a CVaaS enrollment token
@@ -137,19 +154,19 @@ containerlab. On macOS, deploy into a **Podman machine**; `acta.py` can invoke
 containerlab via `podman machine ssh` when needed.
 
 ```bash
-uv run python acta.py clab generate topology-….yml --name mylab --image ceos:4.35.4M
-uv run python acta.py clab deploy mylab.clab.yml
+python acta.py clab generate topology-….yml --name mylab --image ceos:4.35.4M
+python acta.py clab deploy mylab.clab.yml
 # or:  clab deploy --from-act topology-….yml
-uv run python acta.py clab onboard mylab.clab.yml --endpoint apiserver.arista.io
+python acta.py clab onboard mylab.clab.yml --endpoint apiserver.arista.io
 ```
 
 After topology edits (`attach` / `extend`):
 
 ```bash
-uv run python acta.py clab destroy mylab.clab.yml
-uv run python acta.py clab deploy mylab.clab.yml
+python acta.py clab destroy mylab.clab.yml
+python acta.py clab deploy mylab.clab.yml
 # same as:
-uv run python acta.py clab redeploy mylab.clab.yml
+python acta.py clab redeploy mylab.clab.yml
 ```
 
 ### Naming and identity
@@ -173,14 +190,20 @@ uv run python acta.py clab redeploy mylab.clab.yml
 Defaults: subnet `172.100.100.0/22`, sequential static `mgmt-ipv4`, DNS/NTP in VRF
 `MGMT` (`CLAB_DNS` / `CLAB_NTP` or `--name-servers` / `--ntp-servers`). Useful
 generate flags: `--mgmt-subnet`, `--mgmt-gateway`, `--mgmt-range`, `--mgmt-bridge`,
-`--mgmt-mtu`, `--mgmt-network`. Deploy can override `--mgmt-network` on the host
-copy only.
+`--mgmt-mtu`, `--mgmt-network`. Deploy can override `--mgmt-network` /
+`--mgmt-bridge` on the host copy only.
+
+`--mgmt-network` is the Docker/Podman **network name** (default `clab`).
+`--mgmt-bridge` is the Linux **bridge interface** name (`mgmt.bridge`, ≤15 chars).
+Bridge settings apply when the network is **created**; if a network already
+exists, destroy it first (or use a new `--mgmt-network` name) for Docker to
+pick up a new bridge.
 
 `.config` keys (CLI wins): `CLAB_NAME`, `CLAB_IMAGE`, `CLAB_HOST`, `CLAB_HOST_IMAGE`,
 `CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`, `CLAB_DISABLEAAA`,
 `CVAAS_HOST`, `CVAAS_TOKEN`, …
 
-Full flag lists: `uv run python acta.py clab <command> --help`.
+Full flag lists: `python acta.py clab <command> --help`.
 
 ---
 
@@ -189,27 +212,31 @@ Full flag lists: `uv run python acta.py clab <command> --help`.
 ### `show`
 
 ```bash
-uv run python acta.py show topology-….yml
-uv run python acta.py show topology-….yml --plain --no-ssh
+python acta.py show topology-….yml
+python acta.py show topology-….yml --plain --no-ssh
+# Remote clab (Docker/Podman on another host) — also: acta.py clab show …
+python acta.py show topology-….clab.yml --host user@lab-host --runtime docker
 ```
 
 Prints node counts, **numbered MLAG pairs** (`--mlag-pair`), **member-leaves**
 (`--mleaf`), attached hosts, and SSH-reachable mgmt IPs (`admin@…` switches,
-`root@…` multitool hosts). Writes / refreshes a Graphviz PNG; inline in
-Kitty / Ghostty / WezTerm / iTerm2 when supported (`--image` / `--plain`).
+`root@…` multitool hosts). Accepts ACT YAML or `.clab.yml`. Writes / refreshes
+a Graphviz PNG; inline in Kitty / Ghostty / WezTerm / iTerm2 when supported
+(`--image` / `--plain`).
 
-On macOS, TCP/22 to `172.100.x.x` from the Mac often fails (address lives in the
-Podman VM). Show falls back to probing via `podman machine ssh` when possible.
-For a shell, prefer `acta.py ssh` (exec) over host-routed SSH.
+With `--host`, TCP/22 probes and `containerlab inspect` run on that lab host
+(where the mgmt bridge is routed). On macOS without `--host`, show falls back
+to `podman machine ssh` when local probes miss. Prefer `acta.py ssh` (exec)
+over host-routed SSH for a shell.
 
 ### `attach host`
 
 Create builds the **switch fabric first**. Attach jumphosts afterward:
 
 ```bash
-uv run python acta.py attach host jump1 topology-….yml --to leaf1
-uv run python acta.py attach host jump2 topology-….yml --mlag-pair 1 --et 11
-uv run python acta.py attach host jump3 topology-….yml --mleaf 1
+python acta.py attach host jump1 topology-….yml --to leaf1
+python acta.py attach host jump2 topology-….yml --mlag-pair 1 --et 11
+python acta.py attach host jump3 topology-….yml --mleaf 1
 ```
 
 - ACT → `node_type: generic` (default ubuntu / `ansible`/`ansible`).
@@ -223,10 +250,10 @@ Then `clab redeploy` (or destroy+deploy) so the running lab picks up new hosts.
 ### `ssh`
 
 ```bash
-uv run python acta.py ssh blz2-host1              # bash
-uv run python acta.py ssh A-leaf1                 # EOS Cli
-uv run python acta.py ssh host1 -- uname -a
-uv run python acta.py ssh leaf1 --runtime docker -- show hostname
+python acta.py ssh blz2-host1              # bash
+python acta.py ssh A-leaf1                 # EOS Cli
+python acta.py ssh host1 -- uname -a
+python acta.py ssh leaf1 --runtime docker -- show hostname
 ```
 
 Uses `podman` or `docker exec` (not mgmt-network SSH). Unique name fragments are

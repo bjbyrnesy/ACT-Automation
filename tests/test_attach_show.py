@@ -224,6 +224,57 @@ def test_probe_ssh_falls_back_to_podman_machine(monkeypatch: pytest.MonkeyPatch)
     assert reachable == {"blz2-host1": "172.100.100.19"}
 
 
+def test_probe_ssh_uses_remote_host(monkeypatch: pytest.MonkeyPatch):
+    from acta import show_topo
+
+    monkeypatch.setattr(show_topo, "tcp_ssh_open", lambda ip, **_: False)
+    monkeypatch.setattr(
+        show_topo,
+        "_probe_ips_via_ssh_host",
+        lambda host, ips: (
+            {"10.1.1.9"} if host == "user@lab" and "10.1.1.9" in ips else set()
+        ),
+    )
+    reachable = show_topo.probe_ssh_reachable(
+        {"leaf1": "10.1.1.9", "leaf2": "10.1.1.10"},
+        ssh_host="user@lab",
+    )
+    assert reachable == {"leaf1": "10.1.1.9"}
+
+
+def test_show_clab_yml_lists_nodes_and_probes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    from acta.show_topo import render_show
+
+    path = tmp_path / "lab.clab.yml"
+    path.write_text(
+        "name: lab\n"
+        "mgmt:\n"
+        "  ipv4-subnet: 10.50.0.0/24\n"
+        "topology:\n"
+        "  nodes:\n"
+        "    lab-leaf1:\n"
+        "      kind: arista_ceos\n"
+        "      mgmt-ipv4: 10.50.0.2\n"
+        "    lab-host1:\n"
+        "      kind: linux\n"
+        "      mgmt-ipv4: 10.50.0.3\n",
+        encoding="utf-8",
+    )
+    render_show(
+        path,
+        plain=True,
+        skip_probe=False,
+        probe=lambda ip: ip in {"10.50.0.2", "10.50.0.3"},
+    )
+    out = capsys.readouterr().out
+    assert "lab-leaf1" in out
+    assert "lab-host1" in out
+    assert "SSH reachable" in out
+    assert "10.50.0.2" in out
+
+
 def test_attach_mlag_pair(tmp_path: Path):
     path = _topo(tmp_path)
     result = attach_host_act(
@@ -388,7 +439,7 @@ def test_cli_show_and_attach_help():
     import sys
 
     root = Path(__file__).resolve().parents[1]
-    for cmd in (["show", "--help"], ["attach", "--help"]):
+    for cmd in (["show", "--help"], ["attach", "--help"], ["clab", "show", "--help"]):
         proc = subprocess.run(
             [sys.executable, str(root / "acta.py"), *cmd],
             check=False,
@@ -396,3 +447,6 @@ def test_cli_show_and_attach_help():
             text=True,
         )
         assert proc.returncode == 0, proc.stderr
+        if cmd[0] == "show" or cmd[:2] == ["clab", "show"]:
+            assert "--host" in proc.stdout
+            assert "--runtime" in proc.stdout

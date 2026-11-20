@@ -13,6 +13,7 @@ from .support import (
     host_run,
     resolve_topology_path,
     support_bundle,
+    validate_bridge_name,
     validate_lab,
     validate_network_name,
 )
@@ -23,12 +24,16 @@ def deploy(args):
     args.topology = str(path)
     lab = validate_lab(path)
     content = path.read_text()
-    if args.mgmt_network:
-        network = validate_network_name(args.mgmt_network)
+    mgmt_network = getattr(args, "mgmt_network", None)
+    mgmt_bridge = getattr(args, "mgmt_bridge", None)
+    if mgmt_network or mgmt_bridge:
         mgmt = lab.setdefault("mgmt", {})
         if not isinstance(mgmt, dict):
             fail("Invalid management network configuration.")
-        mgmt["network"] = network
+        if mgmt_network:
+            mgmt["network"] = validate_network_name(mgmt_network)
+        if mgmt_bridge:
+            mgmt["bridge"] = validate_bridge_name(mgmt_bridge)
         content = yaml_text(lab)
     bundle = support_bundle(path.parent, lab)
     if bundle:

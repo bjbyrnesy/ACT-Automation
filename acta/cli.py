@@ -167,7 +167,11 @@ def build_parser() -> argparse.ArgumentParser:
         "show",
         help="Show fabric summary, MLAG pairs, and Graphviz PNG (inline when supported)",
     )
-    show.add_argument("topology", type=Path, help="ACT topology YAML")
+    show.add_argument(
+        "topology",
+        type=Path,
+        help="ACT topology YAML or .clab.yml",
+    )
     show_view = show.add_mutually_exclusive_group()
     show_view.add_argument(
         "--image",
@@ -183,6 +187,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-ssh",
         action="store_true",
         help="Skip SSH reachability probes of management IPs",
+    )
+    show.add_argument(
+        "--host",
+        default=None,
+        help=(
+            "SSH alias or user@host for a remote clab lab "
+            "(probe TCP/22 and containerlab inspect on that host; "
+            "default: CLAB_HOST from .config when set)"
+        ),
+    )
+    show.add_argument(
+        "--runtime",
+        choices=("podman", "docker"),
+        default=None,
+        help="Container runtime of the remote lab (informational; default: podman)",
     )
 
     ssh = sub.add_parser(
@@ -507,11 +526,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             from acta.show_topo import run_show
 
+            config = load_config(_PROJECT_DIR / ".config")
+            host = args.host or config.get("CLAB_HOST") or None
             return run_show(
                 args.topology,
                 plain=args.plain,
                 force_image=args.image,
                 skip_probe=args.no_ssh,
+                host=host,
+                runtime=args.runtime,
             )
         if args.command == "ssh":
             from acta.ssh_node import run_ssh
