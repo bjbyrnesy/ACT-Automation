@@ -1,30 +1,55 @@
+"""Graphviz DOT rendering for ACT topologies (parity with former generate.sh)."""
+
 from __future__ import annotations
 
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
-from acta.topology import parse_connections
+from acta.capacity import parse_capacity_header
+from acta.topology import Connection, parse_connections
 
-_NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
+_NODE_BLOCK_RE = re.compile(
+    r"^  - (?P<name>[^:\n]+):\n" r"(?P<body>(?:      .+\n)*)",
+    re.MULTILINE,
+)
+_IP_RE = re.compile(r"ip_addr:\s*(?P<ip>[^\s/]+)")
+
+_FILL = {
+    "bb": "#d1fae5",
+    "border": "#ede9fe",
+    "spine": "#dbeafe",
+    "leaf": "#fef3c7",
+    "mleaf": "#fce7f3",
+}
+_MLAG_COLOR = "#dc2626"
+_BB_COLOR = "#059669"
+
+
+@dataclass(frozen=True)
+class _Node:
+    name: str
+    role: str
+    site: str | None
+    index: int
+    ip: str
+    dot_id: str
 
 
 def topology_to_dot(topology_source: str) -> str:
-    """Return a minimal Graphviz representation of an ACT topology."""
-    nodes = [match.group("name") for match in _NODE_RE.finditer(topology_source)]
-    lines = [
-        "graph topology {",
-        '  graph [rankdir="TB", overlap=false, splines=true];',
-        '  node [shape=box, style="rounded,filled", fillcolor="#dbeafe"];',
-    ]
-    lines.extend(f'  "{_escape(name)}";' for name in nodes)
-    lines.extend(
-        f'  "{_escape(connection.a_node)}" -- ' f'"{_escape(connection.b_node)}";'
-        for connection in parse_connections(topology_source)
-    )
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+    """Return Graphviz DOT matching the former ``generate.sh`` layout."""
+    nodes = _parse_nodes(topology_source)
+    if not nodes:
+        return 'digraph topology {\n  label="empty";\n}\n'
+
+    connections = parse_connections(topology_source)
+    by_name = {node.name: node for node in nodes}
+    multi = any(node.site is not None for node in nodes)
+    if multi:
+        return _dot_multi(topology_source, nodes, by_name, connections)
+    return _dot_single(topology_source, nodes, by_name, connections)
 
 
 def write_png(dot_source: str, png_path: Path) -> bool:
@@ -48,6 +73,297 @@ def write_png(dot_source: str, png_path: Path) -> bool:
         png_path.unlink(missing_ok=True)
         return False
     return True
+
+
+def _parse_nodes(topology_source: str) -> list[_Node]:
+    nodes: list[_Node] = []
+    for match in _NODE_BLOCK_RE.finditer(topology_source):
+        name = match.group("name").strip()
+        body = match.group("body")
+        ip_match = _IP_RE.search(body)
+        ip = ip_match.group("ip") if ip_match else ""
+        parsed = _parse_identity(name)
+        if parsed is None:
+            continue
+        site, role, index = parsed
+        if role == "bb":
+            dot_id = f"bb{index}"
+        elif site is None:
+            dot_id = f"{role}{index}"
+        else:
+            dot_id = f"{site}_{role}{index}"
+        nodes.append(
+            _Node(
+                name=name,
+                role=role,
+                site=site,
+                index=index,
+                ip=ip,
+                dot_id=dot_id,
+            )
+        )
+    return nodes
+
+
+def _parse_identity(hostname: str) -> tuple[str | None, str, int] | None:
+    """Return ``(site|None, role, index)`` from an ACT hostname."""
+    multi = re.search(
+        r"-(?P<site>[A-D])-(?P<role>border|spine|leaf|mleaf)(?P<index>\d+)$",
+        hostname,
+    )
+    if multi:
+        return multi.group("site"), multi.group("role"), int(multi.group("index"))
+    bb = re.search(r"-bb(?P<index>\d+)$", hostname)
+    if bb:
+        return None, "bb", int(bb.group("index"))
+    single = re.search(
+        r"-(?P<role>border|spine|leaf|mleaf)(?P<index>\d+)$",
+        hostname,
+    )
+    if single:
+        return None, single.group("role"), int(single.group("index"))
+    return None
+
+
+def _host_prefix(nodes: list[_Node]) -> str:
+    sample = nodes[0].name
+    multi = re.sub(r"-[A-D]-(?:border|spine|leaf|mleaf)\d+$", "", sample)
+    if multi != sample:
+        return multi
+    return re.sub(r"-(?:bb|border|spine|leaf|mleaf)\d+$", "", sample)
+
+
+def _serial_prefix(source: str, nodes: list[_Node]) -> str:
+    match = re.search(r"serial_number:\s*(?P<serial>[^\s-]+)", source)
+    if match:
+        return match.group("serial")
+    return _host_prefix(nodes)
+
+
+def _title_single(source: str, nodes: list[_Node]) -> str:
+    spines = sum(1 for node in nodes if node.role == "spine")
+    leaves = sum(1 for node in nodes if node.role == "leaf")
+    mleafs = sum(1 for node in nodes if node.role == "mleaf")
+    prefix = _serial_prefix(source, nodes)
+    title = f"{prefix}: {spines} spine × {leaves} leaf"
+    if _has_leaf_mlag(nodes, parse_connections(source)):
+        title += " (MLAG)"
+    if mleafs:
+        title += f" + {mleafs} member"
+    return title
+
+
+def _title_multi(source: str, nodes: list[_Node]) -> str:
+    sites = sorted({node.site for node in nodes if node.site})
+    spines = max(
+        (
+            sum(1 for node in nodes if node.site == site and node.role == "spine")
+            for site in sites
+        ),
+        default=0,
+    )
+    leaves = max(
+        (
+            sum(1 for node in nodes if node.site == site and node.role == "leaf")
+            for site in sites
+        ),
+        default=0,
+    )
+    prefix = _serial_prefix(source, nodes)
+    fabric = _fabric_mode(source, nodes)
+    title = f"{prefix}: {len(sites)} site × ({spines} spine × {leaves} leaf"
+    if _has_leaf_mlag(nodes, parse_connections(source)):
+        title += " MLAG"
+    title += f") + backbone ({fabric})"
+    return title
+
+
+def _fabric_mode(source: str, nodes: list[_Node]) -> str:
+    try:
+        mode = parse_capacity_header(source).fabric_mode
+    except ValueError:
+        mode = None
+    if mode:
+        return mode
+    return "l3ls" if any(node.role == "border" for node in nodes) else "l2"
+
+
+def _ip_label(node: _Node, *, multi: bool) -> str:
+    if not node.ip:
+        return node.name
+    if multi and node.role != "bb":
+        octet = node.ip.rsplit(".", 1)[-1]
+        return f"{node.name}\\n.{octet}"
+    return f"{node.name}\\n{node.ip}"
+
+
+def _node_decl(node: _Node, *, multi: bool, indent: str = "  ") -> str:
+    fill = _FILL.get(node.role, "#dbeafe")
+    label = _ip_label(node, multi=multi)
+    return f'{indent}{node.dot_id} [label="{_escape(label)}", fillcolor="{fill}"];'
+
+
+def _has_leaf_mlag(nodes: list[_Node], connections: list[Connection]) -> bool:
+    by_name = {node.name: node for node in nodes}
+    for conn in connections:
+        left = by_name.get(conn.a_node)
+        right = by_name.get(conn.b_node)
+        if left and right and left.role == "leaf" and right.role == "leaf":
+            return True
+    return False
+
+
+def _edge_style(left: _Node, right: _Node, *, multi_site: bool = False) -> str:
+    roles = {left.role, right.role}
+    mlag_width = "1.5" if multi_site else "2"
+    if roles <= {"leaf", "spine", "border"} and len(roles) == 1:
+        return (
+            f' [style=dashed, color="{_MLAG_COLOR}", '
+            f"penwidth={mlag_width}, constraint=false]"
+        )
+    if roles == {"bb"}:
+        return f' [style=dashed, color="{_BB_COLOR}", penwidth=2, constraint=false]'
+    if "bb" in roles:
+        return f' [color="{_BB_COLOR}", penwidth=1.5]'
+    return ""
+
+
+def _ordered_pair(left: _Node, right: _Node) -> tuple[_Node, _Node]:
+    """Prefer parent→child edge direction for Graphviz ranking."""
+    order = {"bb": 0, "border": 1, "spine": 2, "leaf": 3, "mleaf": 4}
+    if order.get(left.role, 9) <= order.get(right.role, 9):
+        return left, right
+    return right, left
+
+
+def _dot_single(
+    source: str,
+    nodes: list[_Node],
+    by_name: dict[str, _Node],
+    connections: list[Connection],
+) -> str:
+    lines = [
+        "digraph topology {",
+        f'  label="{_escape(_title_single(source, nodes))}";',
+        '  labelloc="t"; fontname="Helvetica"; fontsize=16;',
+        "  rankdir=TB; splines=line; nodesep=0.4; ranksep=1.0;",
+        (
+            '  node [shape=box, style="rounded,filled", '
+            'fontname="Helvetica", fontsize=11];'
+        ),
+        "  edge [dir=none, penwidth=1.2];",
+        "",
+    ]
+    for role in ("spine", "leaf", "mleaf"):
+        group = sorted(
+            (node for node in nodes if node.role == role),
+            key=lambda item: item.index,
+        )
+        if not group:
+            continue
+        lines.append("  { rank=same;")
+        for node in group:
+            lines.append(_node_decl(node, multi=False, indent="    "))
+        lines.append("  }")
+    lines.append("")
+    for conn in connections:
+        left = by_name.get(conn.a_node)
+        right = by_name.get(conn.b_node)
+        if left is None or right is None:
+            continue
+        parent, child = _ordered_pair(left, right)
+        style = _edge_style(parent, child)
+        lines.append(f"  {parent.dot_id} -> {child.dot_id}{style};")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _dot_multi(
+    source: str,
+    nodes: list[_Node],
+    by_name: dict[str, _Node],
+    connections: list[Connection],
+) -> str:
+    fabric = _fabric_mode(source, nodes)
+    lines = [
+        "digraph topology {",
+        f'  label="{_escape(_title_multi(source, nodes))}";',
+        '  labelloc="t"; fontname="Helvetica"; fontsize=18;',
+        "  rankdir=TB; compound=true; splines=true;",
+        "  nodesep=0.3; ranksep=0.8;",
+        (
+            '  node [shape=box, style="rounded,filled", '
+            'fontname="Helvetica", fontsize=10];'
+        ),
+        "  edge [dir=none, penwidth=1.0];",
+        "",
+        "  { rank=min;",
+    ]
+    for node in sorted(
+        (item for item in nodes if item.role == "bb"),
+        key=lambda item: item.index,
+    ):
+        lines.append(
+            f'    {node.dot_id} [label="{_escape(_ip_label(node, multi=False))}", '
+            f'fillcolor="{_FILL["bb"]}"];'
+        )
+    lines.append("  }")
+    lines.append("")
+
+    sites = sorted({node.site for node in nodes if node.site})
+    for site in sites:
+        site_nodes = [node for node in nodes if node.site == site]
+        lines.append(f"  subgraph cluster_{site} {{")
+        lines.append(
+            f'    label="Site {site}"; style="rounded,dashed"; color="#6b7280";'
+        )
+        lines.append('    fontname="Helvetica-Bold"; fontsize=13; margin=12;')
+        lines.append("")
+        for role in ("border", "spine", "leaf", "mleaf"):
+            if role == "border" and fabric != "l3ls":
+                continue
+            group = sorted(
+                (node for node in site_nodes if node.role == role),
+                key=lambda item: item.index,
+            )
+            if not group:
+                continue
+            lines.append("    { rank=same;")
+            for node in group:
+                lines.append(_node_decl(node, multi=True, indent="      "))
+            lines.append("    }")
+        lines.append("")
+
+        for conn in connections:
+            left = by_name.get(conn.a_node)
+            right = by_name.get(conn.b_node)
+            if left is None or right is None:
+                continue
+            if left.role == "bb" or right.role == "bb":
+                continue
+            if left.site != site or right.site != site:
+                continue
+            parent, child = _ordered_pair(left, right)
+            style = _edge_style(parent, child, multi_site=True)
+            lines.append(f"    {parent.dot_id} -> {child.dot_id}{style};")
+        lines.append("  }")
+        lines.append("")
+
+    for conn in connections:
+        left = by_name.get(conn.a_node)
+        right = by_name.get(conn.b_node)
+        if left is None or right is None:
+            continue
+        if left.role != "bb" and right.role != "bb":
+            continue
+        # Site gear → backbone (matches generate.sh); bb peer either way.
+        if left.role == "bb" and right.role != "bb":
+            left, right = right, left
+        style = _edge_style(left, right, multi_site=True)
+        lines.append(f"  {left.dot_id} -> {right.dot_id}{style};")
+
+    lines.append("}")
+    return "\n".join(lines) + "\n"
 
 
 def _escape(value: str) -> str:
