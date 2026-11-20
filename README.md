@@ -85,7 +85,7 @@ acta clab redeploy mylab.clab.yml        # after attach/extend
 | Command | Purpose |
 | --- | --- |
 | `act create` | Interactive fabric + capacity header; `--for act\|clab\|both` |
-| `act extend` | Add leaf / mleaf / … on unused ports only |
+| `act extend` | Add leaf / mleaf / site / … on unused ports only |
 | `act upload` | Push YAML to ACT; optional lab create/deploy |
 | `act onboard` | Running ACT lab → CVaaS (SSH + TerminAttr on **vEOS** only) |
 | `clab create` | Same interactive create; defaults to clab (`--for clab\|both`). Still writes an ACT YAML sibling as the fabric source for extend/generate |
@@ -109,10 +109,12 @@ python acta.py act create
 python acta.py act create --for both --name mylab --image ceos:4.35.4M
 ```
 
-Prompts cover serial/hostname prefix, site count, spines/leaves, MLAG, member-leaves,
-use case (`datacenter`|`campus`), fabric mode (`l3ls`|`l2ls`), and **planned capacity**
-(`max_spines`, `max_leaves`, `max_mleafs_per_pair`). Capacity is stored in
-`# capacity:` header comments so later extend can use reserved Ethernet blocks.
+Prompts cover serial/hostname prefix, site count (1–8) with **named site tokens**,
+spines/leaves, MLAG, member-leaves, use case (`datacenter`|`campus`), fabric mode
+(`l3ls`|`l2ls`), backbone/border redundancy (`mlag-peer` default or `evpn-aa`), and
+**planned capacity** (`max_spines`, `max_leaves`, `max_mleafs_per_pair`). Capacity is
+stored in `# capacity:` header comments so later extend can use reserved Ethernet
+blocks.
 
 | `--for` | Output |
 | --- | --- |
@@ -127,6 +129,9 @@ Default comes from `CREATE_FOR` in `.config` when set.
 ```bash
 python acta.py act extend topology-….yml --add leaf
 python acta.py act extend topology-….yml --add mleaf --pair 1
+# Add (or promote into) a named site — always writes a new dated YAML
+python acta.py act extend topology-….yml --add site --name aus
+python acta.py act extend topology-….yml --add site --first-site aus --name dfw
 ```
 
 - **Soft max:** capacity header. Past soft max → warning; still ≤ Ethernet16.
@@ -134,6 +139,12 @@ python acta.py act extend topology-….yml --add mleaf --pair 1
 - **L2LS spines:** hard-capped at 2.
 - Existing `node:EthernetN` endpoints never move. Bad/missing capacity header → fail;
   recreate with `act create`.
+- **`--add site`:** promotes a single-site lab to a named first site + backbone hub
+  when needed, then can add another site. L3LS attaches borders↔bb; L2LS attaches
+  spines↔bb. Default redundancy is `mlag-peer`; `evpn-aa` skips peer links. Prints a
+  baseline→EVPN RAM range and ACT upload next steps; confirm (or `--force`) when
+  projected cEOS exceed ~24. Serial/MAC preserved on promote unless
+  `--rekey-identity`.
 
 ### Upload + onboard
 
