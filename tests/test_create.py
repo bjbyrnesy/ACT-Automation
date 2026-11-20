@@ -313,7 +313,8 @@ def test_multi_dc_l3ls_ports_follow_reserved_blocks():
     assert ("demo-A-border1", 5, "demo-A-border2", 5) in links
     assert ("demo-A-border1", 7, "demo-bb1", 1) in links
     assert ("demo-B-border2", 8, "demo-bb2", 4) in links
-    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+    # Peer reserved after max-site block so later site adds do not renumber.
+    assert ("demo-bb1", 15, "demo-bb2", 15) in links
     # leaf mesh and MLAG are unchanged per site.
     assert ("demo-B-spine1", 2, "demo-B-leaf2", 1) in links
     assert ("demo-B-leaf1", 5, "demo-B-leaf2", 5) in links
@@ -326,7 +327,7 @@ def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
     assert ("demo-A-spine1", 11, "demo-bb1", 1) in links
     assert ("demo-A-spine2", 12, "demo-bb2", 2) in links
     assert ("demo-B-spine1", 11, "demo-bb1", 3) in links
-    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+    assert ("demo-bb1", 15, "demo-bb2", 15) in links
 
 
 def test_multi_dc_leaf_growth_does_not_move_uplinks():
@@ -347,7 +348,7 @@ def test_multi_dc_rejects_bad_mode_and_uplink_overflow():
     spec = _multi_dc_spec("l3ls")
     with pytest.raises(ValueError, match="fabric_mode"):
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, fabric_mode=None)))
-    with pytest.raises(ValueError, match="hard cap"):
+    with pytest.raises(ValueError, match="hard (cap|max)"):
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, max_leaves=13)))
 
 

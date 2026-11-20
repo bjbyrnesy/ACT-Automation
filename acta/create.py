@@ -366,9 +366,10 @@ def _backbone_link_lines(spec: FabricSpec, plan: PortPlan) -> list[str]:
                             plan.bb_border_port(site_index, border),
                         )
                     )
-    peer = plan.bb_peer_port(spec.dc_count)
-    lines.extend(["", "  # Backbone peer link"])
-    lines.append(_connection(f"{prefix}-bb1", peer, f"{prefix}-bb2", peer))
+    if spec.capacity.bb_redundancy == "mlag-peer" and spec.capacity.bb_count >= 2:
+        peer = plan.bb_peer_port()
+        lines.extend(["", "  # Backbone peer link"])
+        lines.append(_connection(f"{prefix}-bb1", peer, f"{prefix}-bb2", peer))
     return lines
 
 
