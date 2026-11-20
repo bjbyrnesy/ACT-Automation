@@ -7,8 +7,6 @@
 # multicast raw sockets. DS-0002 ignored in .trivyignore for that reason.
 ARG MULTITOOL_IMAGE=ghcr.io/srl-labs/network-multitool:v0.10.0
 FROM ${MULTITOOL_IMAGE}
-# Keep upstream root runtime; do not add USER.
-USER root
 
 # Redeclare after FROM so the version is available to RUN.
 ARG MCAST_TOOLS_VERSION=0.2.3
