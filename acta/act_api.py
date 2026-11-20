@@ -34,6 +34,25 @@ class ActClient:
         self._token = token
         return token
 
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: object | None = None,
+        params: dict[str, object] | None = None,
+    ) -> httpx.Response:
+        """Send an authenticated request; the caller inspects the response."""
+        if self._token is None:
+            raise RuntimeError("ACT login is required before making a request")
+        return self._client.request(
+            method,
+            f"{self._base_url}/{path.lstrip('/')}",
+            json=json,
+            params=params,
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+
     def poll_operation(
         self,
         operation: dict,
@@ -42,6 +61,20 @@ class ActClient:
         interval: float = 10.0,
     ) -> dict:
         """Poll an ACT operation until it completes successfully."""
+        result = self.poll_operation_result(operation, label, max_iterations, interval)
+        status = result.get("status", "unknown")
+        if isinstance(status, str) and status.casefold() == "completed":
+            return result
+        raise RuntimeError(f"{label} operation completed with status {status}")
+
+    def poll_operation_result(
+        self,
+        operation: dict,
+        label: str,
+        max_iterations: int = 60,
+        interval: float = 10.0,
+    ) -> dict:
+        """Poll an ACT operation until finished and return it, whatever its status."""
         operation_id = operation.get("id")
         if not isinstance(operation_id, str) or not operation_id:
             raise ValueError(f"ACT did not return an operation ID for {label}")
@@ -63,10 +96,7 @@ class ActClient:
             if not isinstance(result, dict):
                 raise TypeError(f"ACT returned an invalid operation for {label}")
             if result.get("is_completed") is True:
-                status = result.get("status", "unknown")
-                if isinstance(status, str) and status.casefold() == "completed":
-                    return result
-                raise RuntimeError(f"{label} operation completed with status {status}")
+                return result
 
         iteration_label = "iteration" if max_iterations == 1 else "iterations"
         raise TimeoutError(
