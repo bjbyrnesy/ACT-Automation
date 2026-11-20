@@ -81,9 +81,16 @@ def main(argv=None):
         help="IPv4 NTP servers for MGMT (default: CLAB_NTP from .config)",
     )
     gen.set_defaults(func=generate)
+    from_act_default = config_flag(config.get("CLAB_FROM_ACT"), default=False)
     for command, handler in [("deploy", deploy), ("onboard", onboard)]:
         action = sub.add_parser(command)
-        action.add_argument("topology")
+        action.add_argument(
+            "topology",
+            help=(
+                "Project .clab.yml, or an ACT topology when --from-act / "
+                "CLAB_FROM_ACT=y is set"
+            ),
+        )
         action.add_argument(
             "--host",
             default=config.get("CLAB_HOST") or None,
@@ -94,6 +101,32 @@ def main(argv=None):
             choices=("docker", "podman"),
             default="docker" if command == "deploy" else None,
             help="Container runtime (deploy defaults to docker; onboarding auto-detects)",
+        )
+        action.add_argument(
+            "--from-act",
+            dest="from_act",
+            action="store_true",
+            default=from_act_default,
+            help=(
+                "Accept an acta.py create topology and generate .clab.yml first "
+                "(default: CLAB_FROM_ACT from .config)"
+            ),
+        )
+        action.add_argument(
+            "--no-from-act",
+            dest="from_act",
+            action="store_false",
+            help="Require a project-generated .clab.yml (ignore CLAB_FROM_ACT)",
+        )
+        action.add_argument(
+            "--name",
+            default=config.get("CLAB_NAME") or None,
+            help="Lab name when converting from ACT (default: CLAB_NAME or topology stem)",
+        )
+        action.add_argument(
+            "--image",
+            default=config_image(config),
+            help="cEOS image when converting from ACT (default: CLAB_IMAGE / EOS_VERSION)",
         )
         if command == "deploy":
             action.add_argument(

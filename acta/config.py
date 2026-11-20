@@ -32,6 +32,7 @@ CONFIG_KEYS = (
     "CLAB_DNS",
     "CLAB_NTP",
     "CLAB_DISABLEAAA",
+    "CLAB_FROM_ACT",
     "FABRIC_MODE",
     "MAX_SPINES",
     "MAX_LEAVES",

@@ -20,6 +20,7 @@ from .support import (
     mgmt_service_commands,
     parse_ipv4_list,
     read_config,
+    resolve_topology_path,
     validate_enrollment_token,
     validate_lab,
 )
@@ -111,7 +112,9 @@ def enrollment_token(config):
 
 
 def onboard(args):
-    lab = validate_lab(Path(args.topology))
+    path = resolve_topology_path(Path(args.topology), args)
+    args.topology = str(path)
+    lab = validate_lab(path)
     runtime = check_onboarding_host(args.host, lab, getattr(args, "runtime", None))
     config = args.config if getattr(args, "config", None) is not None else read_config()
     endpoint = (

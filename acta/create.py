@@ -703,6 +703,9 @@ def run_create(project_dir: Path) -> Path:
     name = output_path.name
     print("Next:")
     print(f"  ACT:          acta.py upload {name}")
-    print(f"  containerlab: acta.py clab generate {name} --name <lab> --image <ceos>")
+    print(
+        f"  containerlab: acta.py clab deploy {name} --from-act "
+        "(or set CLAB_FROM_ACT=y in .config)"
+    )
     print(f"  grow later:   acta.py extend {name} --add leaf")
     return output_path

@@ -10,6 +10,7 @@ from .support import (
     SUPPORT_SCRIPT,
     fail,
     host_run,
+    resolve_topology_path,
     support_bundle,
     validate_lab,
     validate_network_name,
@@ -17,7 +18,8 @@ from .support import (
 
 
 def deploy(args):
-    path = Path(args.topology)
+    path = resolve_topology_path(Path(args.topology), args)
+    args.topology = str(path)
     lab = validate_lab(path)
     content = path.read_text()
     if args.mgmt_network:
