@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from acta.attach import attach_host_act, run_attach
+from acta.attach import attach_host_act, attached_hosts, run_attach
 from acta.capacity import Capacity, host_attach_roles, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
 from acta.extend import leaf_mlag_pairs, member_leaves
@@ -59,6 +59,16 @@ def test_leaf_mlag_pairs_order_matches_extend_pair_index(tmp_path: Path):
     pairs = leaf_mlag_pairs(text)
     assert pairs
     assert pairs[0] == ("demo-leaf1", "demo-leaf2")
+
+
+def test_attached_hosts_lists_generic_nodes_in_order(tmp_path: Path):
+    path = _topo(tmp_path)
+    attach_host_act(path, "jump-a", to=["demo-leaf1:Ethernet10"], sync_sibling=False)
+    attach_host_act(path, "jump-b", to=["demo-leaf2:Ethernet10"], sync_sibling=False)
+    text = path.read_text(encoding="utf-8")
+    assert attached_hosts(text) == ["jump-a", "jump-b"]
+    # Non-generic fabric nodes must not appear.
+    assert "demo-leaf1" not in attached_hosts(text)
 
 
 def test_attach_single_host_to_leaf(tmp_path: Path):
