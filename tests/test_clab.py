@@ -458,7 +458,10 @@ class ContainerlabTests(unittest.TestCase):
             )
             path.write_text(original)
             args = clab.argparse.Namespace(
-                topology=str(path), host="labhost", mgmt_network="mgmt"
+                topology=str(path),
+                host="labhost",
+                mgmt_network="mgmt",
+                mgmt_bridge=None,
             )
             with mock.patch.object(
                 clab_deploy,
@@ -475,6 +478,41 @@ class ContainerlabTests(unittest.TestCase):
             )
             self.assertEqual(
                 parsed["mgmt"], {"network": "mgmt", "ipv4-subnet": "172.100.100.0/22"}
+            )
+            self.assertEqual(path.read_text(), original)
+
+    def test_deploy_can_override_bridge_without_editing_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            original = clab.MARKER + json.dumps(
+                {
+                    "name": "demo",
+                    "mgmt": {"ipv4-subnet": "172.100.100.0/22"},
+                    "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                }
+            )
+            path.write_text(original)
+            args = clab.argparse.Namespace(
+                topology=str(path),
+                host="labhost",
+                mgmt_network=None,
+                mgmt_bridge="mgmtbr0",
+            )
+            with mock.patch.object(
+                clab_deploy,
+                "host_run",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as run:
+                clab.deploy(args)
+            deployed = run.call_args.args[3]
+            parsed = json.loads(
+                subprocess.check_output(
+                    ["yq", "-p=yaml", "-o=json", "."], input=deployed, text=True
+                )
+            )
+            self.assertEqual(
+                parsed["mgmt"],
+                {"ipv4-subnet": "172.100.100.0/22", "bridge": "mgmtbr0"},
             )
             self.assertEqual(path.read_text(), original)
 

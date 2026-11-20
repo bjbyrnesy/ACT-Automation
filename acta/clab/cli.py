@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from .deploy import deploy, redeploy
 from .destroy import destroy
@@ -57,7 +58,12 @@ def main(argv=None):
     gen.add_argument(
         "--mgmt-bridge",
         default=config.get("CLAB_MGMT_BRIDGE") or None,
-        help="Host management bridge name",
+        help=(
+            "Linux bridge interface name for mgmt (containerlab mgmt.bridge; "
+            "≤15 chars). Not the Docker/Podman network name — use --mgmt-network. "
+            "Only applied when the network is created; destroy an existing "
+            "mgmt network first if changing the bridge."
+        ),
     )
     gen.add_argument(
         "--mgmt-mtu",
@@ -147,7 +153,20 @@ def main(argv=None):
             action.add_argument(
                 "--mgmt-network",
                 default=config.get("CLAB_MGMT_NETWORK") or None,
-                help="Management network for this deployment (default: CLAB_MGMT_NETWORK)",
+                help=(
+                    "Docker/Podman management network name for this deployment "
+                    "(default: CLAB_MGMT_NETWORK). Distinct from --mgmt-bridge."
+                ),
+            )
+            action.add_argument(
+                "--mgmt-bridge",
+                default=config.get("CLAB_MGMT_BRIDGE") or None,
+                help=(
+                    "Linux bridge interface name for this deployment "
+                    "(default: CLAB_MGMT_BRIDGE). Only takes effect when the "
+                    "mgmt network is created; destroy the existing network first "
+                    "if changing the bridge on Docker."
+                ),
             )
         if command == "onboard":
             action.add_argument(
@@ -172,10 +191,64 @@ def main(argv=None):
                 help="Do not pass -disableaaa to TerminAttr",
             )
         action.set_defaults(func=handler)
+
+    show = sub.add_parser(
+        "show",
+        help="Show fabric summary / SSH reachability for a local or remote lab",
+    )
+    show.add_argument(
+        "topology",
+        type=Path,
+        help="ACT topology YAML or .clab.yml",
+    )
+    show_view = show.add_mutually_exclusive_group()
+    show_view.add_argument(
+        "--image",
+        action="store_true",
+        help="Force Kitty-graphics inline PNG even if auto-detect is unsure",
+    )
+    show_view.add_argument(
+        "--plain",
+        action="store_true",
+        help="Skip inline image (tables + PNG path only; default when not a TTY)",
+    )
+    show.add_argument(
+        "--no-ssh",
+        action="store_true",
+        help="Skip SSH reachability probes of management IPs",
+    )
+    show.add_argument(
+        "--host",
+        default=config.get("CLAB_HOST") or None,
+        help="SSH alias or user@host (default: CLAB_HOST from .config)",
+    )
+    show.add_argument(
+        "--runtime",
+        choices=("docker", "podman"),
+        default=None,
+        help="Container runtime of the remote lab (informational)",
+    )
+
+    def _run_show(show_args):
+        from acta.show_topo import run_show
+
+        return run_show(
+            show_args.topology,
+            plain=show_args.plain,
+            force_image=show_args.image,
+            skip_probe=show_args.no_ssh,
+            host=show_args.host,
+            runtime=show_args.runtime,
+        )
+
+    show.set_defaults(func=_run_show)
+
     args = parser.parse_args(argv)
     args.config = config
     try:
-        args.func(args)
+        result = args.func(args)
+        if isinstance(result, int):
+            return result
     except (ValueError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

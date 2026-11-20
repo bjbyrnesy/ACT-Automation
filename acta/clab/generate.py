@@ -88,12 +88,10 @@ def management_settings(args, subnet, count):
             raise ValueError(
                 "management range must be an IPv4 subnet inside the management subnet"
             )
-        if args.mgmt_bridge and (
-            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}", args.mgmt_bridge)
-        ):
-            raise ValueError(
-                "management bridge must be a valid interface name of at most 15 characters"
-            )
+        if args.mgmt_bridge:
+            from .support import validate_bridge_name
+
+            validate_bridge_name(args.mgmt_bridge)
         if args.mgmt_mtu is not None and not 576 <= args.mgmt_mtu <= 65535:
             raise ValueError("management MTU must be between 576 and 65535")
         first = max(int(pool.network_address) + 1, int(subnet.network_address) + 1)

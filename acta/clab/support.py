@@ -361,6 +361,16 @@ def validate_network_name(name):
     return name
 
 
+def validate_bridge_name(name):
+    """Linux bridge interface name (IFNAMSIZ ≤ 15), not the Docker/Podman network name."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,14}", name):
+        fail(
+            "Invalid management bridge name; use a Linux interface name of at most "
+            "15 characters (not the Docker/Podman network name — use --mgmt-network)."
+        )
+    return name
+
+
 def act_hostname(act_name):
     """EOS/CVaaS hostname: ACT node name with only a leading ``clab-`` removed."""
     name = act_name.removeprefix("clab-")
