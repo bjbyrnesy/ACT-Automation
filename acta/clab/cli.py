@@ -26,8 +26,11 @@ def main(argv=None):
     gen.add_argument("source")
     gen.add_argument(
         "--name",
-        default=config.get("CLAB_NAME") or None,
-        help="Lab name (default: CLAB_NAME from .config)",
+        default=None,
+        help=(
+            "Lab name (default: hostname prefix from the ACT topology, else "
+            "CLAB_NAME / filename)"
+        ),
     )
     gen.add_argument(
         "--image",

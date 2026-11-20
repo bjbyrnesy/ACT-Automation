@@ -695,16 +695,21 @@ def run_create(
     diagram_written = write_png(topology_to_dot(topology), diagram_path)
 
     clab_path: Path | None = None
+    resolved_clab_name = clab_name
     if output_for in {"clab", "both"}:
         from acta.clab.support import argparse_namespace, materialize_clab_from_act
 
-        if clab_name:
-            config["CLAB_NAME"] = clab_name
+        # Lab name must match the fabric hostname prefix so nodes shorten to
+        # A-spine1 / bb1 and containers become clab-<prefix>-A-spine1.
+        resolved_clab_name = (clab_name or hostname_prefix or serial_prefix).casefold()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", resolved_clab_name):
+            resolved_clab_name = serial_prefix.casefold()
+        config["CLAB_NAME"] = resolved_clab_name
         if clab_image:
             config["CLAB_IMAGE"] = clab_image
         clab_args = argparse_namespace(
             config=config,
-            name=clab_name or config.get("CLAB_NAME") or None,
+            name=resolved_clab_name,
             image=clab_image or None,
             mgmt_network=config.get("CLAB_MGMT_NETWORK") or None,
         )
@@ -728,6 +733,8 @@ def run_create(
             "CREATE_FOR": output_for,
         }
     )
+    if resolved_clab_name:
+        config["CLAB_NAME"] = resolved_clab_name
     save_config(config_path, config)
     print(f"Wrote {output_path.name}")
     if diagram_written:
