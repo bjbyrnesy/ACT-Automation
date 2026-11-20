@@ -188,11 +188,17 @@ sites; port exhaustion; `evpn-aa` with N<2; missing/corrupt capacity header.
 - CLI flags + interactive defaults; always new dated output.
 - Create named-site prompt alignment (smoke).
 
-## Follow-ups (open as GH issues when Issues are enabled)
+## Follow-ups (tracked in-repo; GH Issues currently disabled)
 
-1. **Clos / mesh WAN backbone** beyond hub `bb` set (per-site pairs → Clos).
-2. **Leaf-pair EVPN AA** (optional; borders/bb only in this design).
-3. Optional **live RAM probe** to refine projections from the lab host.
+See [`docs/backlog/`](../../backlog/README.md) until the repo owner enables
+GitHub Issues:
+
+1. **Clos / mesh WAN backbone** — `docs/backlog/002-clos-wan-backbone.md`
+2. **Leaf-pair EVPN AA** — `docs/backlog/003-leaf-pair-evpn-aa.md`
+3. Optional **live RAM probe** — `docs/backlog/004-live-ram-probe.md`
+
+Related (mgmt discovery, deferred earlier):
+`docs/backlog/001-probe-mgmt-network.md`.
 
 ## Implementation note
 
