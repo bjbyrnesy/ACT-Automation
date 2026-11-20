@@ -1,18 +1,121 @@
-# Cached config (contains your CVaaS enrollment token)
+# ---------------------------------------------------------------------------
+# Secrets & local credentials (never commit)
+# ---------------------------------------------------------------------------
+# ACT/CVaaS cached config (ACT_API_KEY, CVAAS_TOKEN, …)
 .config
+.config.*
+!.config.example
 
-# macOS noise
-.DS_Store
+.env
+.env.*
+!.env.example
 
-# VSCode Workspace
-ACT Automation.code-workspace
+# Common key / cert material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+*.pub.bak
 
-# Any topology files
+# Credential dumps / secret stores
+.secrets/
+secrets/
+secrets.*
+**/credentials.json
+**/credentials.*.json
+**/service-account*.json
+**/*-service-account.json
+**/cvaas*token*
+**/act*api*key*
+
+# ---------------------------------------------------------------------------
+# Generated topology / lab artifacts (keep GitHub Actions YAML trackable)
+# ---------------------------------------------------------------------------
 topology*
+!acta/topology*.py
+!tests/test_topology*.py
+
 *.yml
+!.github/
+!.github/**/*.yml
+!.env.example
+!.config.example
+
+*.yaml
+!.github/**/*.yaml
+!.pre-commit-config.yaml
+
 *.annotations.json
 *.eos
+*.png
+!docs/**/*.png
 
-# Python bytecode
+# containerlab / support-bundle outputs
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+support-bundle*
+clab-*/
+.act-automation/
+
+# ---------------------------------------------------------------------------
+# Local scratch (agents, research, parallel-buckets)
+# ---------------------------------------------------------------------------
+.cursor/
+docs/research/
+parallel-buckets.local.yaml
+*.local.yaml
+*.local.yml
+tmp_*
+.tmp/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.uv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache/
+pip-wheel-metadata/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+ACT Automation.code-workspace

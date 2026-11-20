@@ -1,0 +1,16 @@
+# Gitleaks config for ACT-Automation.
+# Keep allowlists narrow — prefer fixing real leaks over silencing rules.
+
+title = "acta"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local-only and generated paths that must never be committed"
+paths = [
+  '''\.config$''',
+  '''\.env(\.|$)''',
+  '''\.venv/''',
+  '''uv\.lock$''',
+]
