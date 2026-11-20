@@ -16,8 +16,9 @@ from acta.capacity import (
 from acta.config import load_config, save_config
 from acta.diagram import topology_to_dot, write_png
 from acta.mac import generate_mac
-from acta.portplan import PortPlan
+from acta.portplan import PortPlan, site_ordinal
 from acta.prompt import prompt_value
+from acta.site_names import MAX_SITES, validate_site_token
 
 DEFAULT_EOS_VERSION = "4.35.4M"
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
@@ -46,17 +47,51 @@ class FabricSpec:
     member_leaf_pairs: list[int]
     member_leaves_per_pair: int
     dc_count: int = 1
+    sites: tuple[str, ...] = ()
+
+
+def _resolved_sites(spec: FabricSpec) -> list[str | None]:
+    """Return per-site tokens for emit; ``[None]`` means single-site."""
+    if spec.sites:
+        return list(spec.sites)
+    if spec.dc_count > 1:
+        if spec.dc_count > len(SITE_LETTERS):
+            raise ValueError(
+                f"dc_count {spec.dc_count} requires explicit sites= "
+                f"(letter shorthand only covers {SITE_LETTERS})"
+            )
+        return [site_letter(index) for index in range(spec.dc_count)]
+    return [None]
 
 
 def _validate_spec(spec: FabricSpec) -> None:
     validate_create_capacity(spec.capacity)
-    if not 1 <= spec.dc_count <= MAX_DC:
-        raise ValueError(f"dc_count must be between 1 and {MAX_DC}")
+    sites = _resolved_sites(spec)
+    multi_dc = sites[0] is not None
+    site_count = len(sites) if multi_dc else 1
+    if not 1 <= site_count <= MAX_DC:
+        raise ValueError(f"site count must be between 1 and {MAX_DC}")
+    if spec.sites:
+        tokens = [validate_site_token(site) for site in spec.sites]
+        if len(set(tokens)) != len(tokens):
+            raise ValueError("site names must be unique")
+        if len(tokens) != spec.dc_count:
+            raise ValueError("dc_count must equal the number of named sites")
     mode = spec.capacity.fabric_mode
-    if spec.dc_count > 1 and mode not in {"l3ls", "l2ls", "l2"}:
+    if multi_dc and mode not in {"l3ls", "l2ls", "l2"}:
         raise ValueError("multi-DC fabrics require fabric_mode l3ls or l2ls")
+    if multi_dc and site_count > PortPlan(spec.capacity).max_attach_sites():
+        raise ValueError(
+            f"{site_count} sites exceed backbone port capacity "
+            f"({PortPlan(spec.capacity).max_attach_sites()} max)"
+        )
     if spec.spine_mlag and spec.capacity.spines != 2:
         raise ValueError("spine MLAG requires exactly two spines")
+    if spec.spine_mlag and mode in {"l3ls", "l3"}:
+        raise ValueError(
+            "L3LS fabrics do not use spine MLAG peer links "
+            "(spines stay independent; leaf MLAG is unchanged)"
+        )
     if spec.member_leaf_pairs and not spec.mlag_pairs:
         raise ValueError("member leaves require leaf MLAG")
     if spec.member_leaf_pairs and spec.member_leaves_per_pair < 1:
@@ -84,12 +119,12 @@ def _validate_spec(spec: FabricSpec) -> None:
         )
     if spec.spine_mlag:
         service_ports.extend(plan.spine_mlag_ports())
-    if spec.dc_count > 1:
+    if multi_dc:
         service_ports.extend(plan.spine_uplink_ports())
         if spec.capacity.fabric_mode == "l3ls":
             service_ports.extend(plan.border_bb_ports())
-        else:
-            service_ports.append(plan.bb_peer_port(spec.dc_count))
+        if spec.capacity.bb_redundancy == "mlag-peer" and spec.capacity.bb_count >= 2:
+            service_ports.append(plan.bb_peer_port())
     if service_ports and max(service_ports) > HARD_PORT_MAX:
         raise ValueError(
             f"planned service ports exceed Ethernet{HARD_PORT_MAX} hard cap"
@@ -98,7 +133,7 @@ def _validate_spec(spec: FabricSpec) -> None:
 
 def _validate_address_ceilings(spec: FabricSpec) -> None:
     """Reject specs whose nodes would overflow their management-IP blocks."""
-    multi_dc = spec.dc_count > 1
+    multi_dc = _resolved_sites(spec)[0] is not None
     spine_limit = address_limit("spine", multi_dc)
     if spec.capacity.max_spines > spine_limit:
         raise ValueError(
@@ -121,24 +156,23 @@ def _validate_address_ceilings(spec: FabricSpec) -> None:
         )
 
 
-MAX_DC = 4
+MAX_DC = MAX_SITES
 SITE_LETTERS = "ABCD"
-_BB_COUNT = 2
-_BORDER_COUNT = 2
-# Multi-DC address layout mirrors generate.sh: backbone at .2/.3, then 62 per site.
+# Multi-DC address layout: backbone at .2/.3 (bb1/bb2), then 30 octets per site
+# so up to MAX_SITES=8 fit in 192.168.0.0/24. Role blocks within each site:
+# border 0-3, spine 4-12, leaf 13-21, mleaf 22-29.
 _SITE_ADDRESS_BASE = 4
-_SITE_ADDRESS_STRIDE = 62
-_MULTI_DC_ADDRESS_OFFSETS = {"border": 0, "spine": 2, "leaf": 11, "mleaf": 50}
+_SITE_ADDRESS_STRIDE = 30
+_MULTI_DC_ADDRESS_OFFSETS = {"border": 0, "spine": 4, "leaf": 13, "mleaf": 22}
 _SINGLE_DC_ADDRESS_BASES = {"spine": 10, "leaf": 20, "mleaf": 130}
-# Per-role index ceilings keep every node inside its own management-IP block
-# (generate.sh MAX_SPINES / MAX_LEAVES[_MULTI] / MAX_TOTAL_MEMBER_LEAVES[_MULTI]).
+# Per-role index ceilings keep every node inside its own management-IP block.
 MAX_ADDRESS_SPINES = 9
 _SINGLE_DC_ADDRESS_LIMITS = {"spine": MAX_ADDRESS_SPINES, "leaf": 99, "mleaf": 100}
 _MULTI_DC_ADDRESS_LIMITS = {
-    "border": _BORDER_COUNT,
+    "border": 4,
     "spine": MAX_ADDRESS_SPINES,
-    "leaf": 39,
-    "mleaf": 12,
+    "leaf": 9,
+    "mleaf": 8,
 }
 
 
@@ -183,10 +217,22 @@ def node_block(
     role: str,
     index: int,
     site: str | None = None,
+    site_index: int | None = None,
 ) -> list[str]:
-    """Return the YAML lines for one fabric node (``site`` set for multi-DC)."""
+    """Return the YAML lines for one fabric node (``site`` set for multi-DC).
+
+    Letter sites ``A``–``D`` infer ``site_index`` from ``SITE_LETTERS``. Named
+    sites must pass an explicit 0-based ``site_index`` (sorted ordinal).
+    """
     identity = f"{role}{index}" if site is None else f"{site}-{role}{index}"
-    site_index = None if site is None else SITE_LETTERS.index(site)
+    if site is not None and site_index is None:
+        if len(site) == 1 and site in SITE_LETTERS:
+            site_index = SITE_LETTERS.index(site)
+        else:
+            raise ValueError(
+                f"site_index is required for named site {site!r} "
+                "(letter sites A–D infer index automatically)"
+            )
     address = node_address(role, index, site_index)
     return [
         f"  - {hostname_prefix}-{identity}:",
@@ -203,8 +249,16 @@ def _node_lines(
     role: str,
     index: int,
     site: str | None = None,
+    site_index: int | None = None,
 ) -> list[str]:
-    return node_block(spec.hostname_prefix, spec.serial_prefix, role, index, site)
+    return node_block(
+        spec.hostname_prefix,
+        spec.serial_prefix,
+        role,
+        index,
+        site,
+        site_index=site_index,
+    )
 
 
 def _connection(
@@ -220,24 +274,26 @@ def _title(site: str | None, text: str) -> str:
     return f"  # {text}" if site is None else f"  # Site {site} — {text}"
 
 
-def _site_node_lines(spec: FabricSpec, site: str | None) -> list[str]:
+def _site_node_lines(
+    spec: FabricSpec, site: str | None, site_index: int | None = None
+) -> list[str]:
     """Emit spine, leaf and member-leaf nodes (plus borders) for one site."""
     lines: list[str] = []
     if site is not None and spec.capacity.fabric_mode == "l3ls":
         lines.extend(["", _title(site, "Border leaves")])
-        for border in range(1, _BORDER_COUNT + 1):
-            lines.extend(["", *_node_lines(spec, "border", border, site)])
+        for border in range(1, spec.capacity.border_count + 1):
+            lines.extend(["", *_node_lines(spec, "border", border, site, site_index)])
     lines.extend(["", _title(site, "Spines")])
     for spine in range(1, spec.capacity.spines + 1):
-        lines.extend(["", *_node_lines(spec, "spine", spine, site)])
+        lines.extend(["", *_node_lines(spec, "spine", spine, site, site_index)])
     lines.extend(["", _title(site, "Leaves")])
     for leaf in range(1, spec.capacity.leaves + 1):
-        lines.extend(["", *_node_lines(spec, "leaf", leaf, site)])
+        lines.extend(["", *_node_lines(spec, "leaf", leaf, site, site_index)])
     member_count = len(spec.member_leaf_pairs) * spec.member_leaves_per_pair
     if member_count:
         lines.extend(["", _title(site, "Member leaves")])
         for member in range(1, member_count + 1):
-            lines.extend(["", *_node_lines(spec, "mleaf", member, site)])
+            lines.extend(["", *_node_lines(spec, "mleaf", member, site, site_index)])
     return lines
 
 
@@ -317,6 +373,8 @@ def _site_link_lines(spec: FabricSpec, plan: PortPlan, site: str | None) -> list
         lines.extend(["", _title(site, "border <-> spine")])
         for spine in range(1, spec.capacity.spines + 1):
             for border, uplink in enumerate(uplinks, start=1):
+                if border > spec.capacity.border_count:
+                    break
                 lines.append(
                     _connection(
                         f"{prefix}-border{border}",
@@ -325,22 +383,28 @@ def _site_link_lines(spec: FabricSpec, plan: PortPlan, site: str | None) -> list
                         uplink,
                     )
                 )
-        lines.extend(["", _title(site, "border MLAG peer")])
-        for port in plan.border_mlag_ports():
-            lines.append(
-                _connection(f"{prefix}-border1", port, f"{prefix}-border2", port)
-            )
+        if (
+            spec.capacity.border_redundancy == "mlag-peer"
+            and spec.capacity.border_count >= 2
+        ):
+            lines.extend(["", _title(site, "border MLAG peer")])
+            for port in plan.border_mlag_ports():
+                lines.append(
+                    _connection(f"{prefix}-border1", port, f"{prefix}-border2", port)
+                )
     return lines
 
 
-def _backbone_link_lines(spec: FabricSpec, plan: PortPlan) -> list[str]:
-    """Emit site <-> backbone links and the bb1/bb2 peer link."""
+def _backbone_link_lines(
+    spec: FabricSpec, plan: PortPlan, sites: list[str]
+) -> list[str]:
+    """Emit site <-> backbone links and optional bb peer link."""
     prefix = spec.hostname_prefix
     lines: list[str] = []
     if spec.capacity.fabric_mode in {"l2ls", "l2"}:
         lines.extend(["", "  # Backbone — spine <-> backbone (l2ls)"])
-        for site_index in range(spec.dc_count):
-            site = site_letter(site_index)
+        for site in sites:
+            site_index = site_ordinal(site, sites)
             for spine in range(1, spec.capacity.spines + 1):
                 bb_port = plan.bb_spine_port(site_index, spine)
                 for bb, uplink in enumerate(plan.spine_uplink_ports(), start=1):
@@ -354,10 +418,10 @@ def _backbone_link_lines(spec: FabricSpec, plan: PortPlan) -> list[str]:
                     )
     else:
         lines.extend(["", "  # Backbone — border <-> backbone"])
-        for site_index in range(spec.dc_count):
-            site = site_letter(site_index)
+        for site in sites:
+            site_index = site_ordinal(site, sites)
             for bb, border_port in enumerate(plan.border_bb_ports(), start=1):
-                for border in range(1, _BORDER_COUNT + 1):
+                for border in range(1, spec.capacity.border_count + 1):
                     lines.append(
                         _connection(
                             f"{prefix}-{site}-border{border}",
@@ -366,9 +430,10 @@ def _backbone_link_lines(spec: FabricSpec, plan: PortPlan) -> list[str]:
                             plan.bb_border_port(site_index, border),
                         )
                     )
-    peer = plan.bb_peer_port(spec.dc_count)
-    lines.extend(["", "  # Backbone peer link"])
-    lines.append(_connection(f"{prefix}-bb1", peer, f"{prefix}-bb2", peer))
+    if spec.capacity.bb_redundancy == "mlag-peer" and spec.capacity.bb_count >= 2:
+        peer = plan.bb_peer_port()
+        lines.extend(["", "  # Backbone peer link"])
+        lines.append(_connection(f"{prefix}-bb1", peer, f"{prefix}-bb2", peer))
     return lines
 
 
@@ -376,7 +441,9 @@ def emit_act_yaml(spec: FabricSpec) -> str:
     """Emit an ACT topology for one data center or a backbone-joined multi-DC."""
     _validate_spec(spec)
     plan = PortPlan(spec.capacity)
-    multi_dc = spec.dc_count > 1
+    sites = _resolved_sites(spec)
+    multi_dc = sites[0] is not None
+    named_sites = [site for site in sites if site is not None]
     lines = [
         "###############################################################################",
         "# Generated by acta.",
@@ -394,12 +461,9 @@ def emit_act_yaml(spec: FabricSpec) -> str:
         "",
         "nodes:",
     ]
-    sites: list[str | None] = (
-        [site_letter(index) for index in range(spec.dc_count)] if multi_dc else [None]
-    )
     if multi_dc:
         lines.extend(["", "  # Backbone routers (IP transport between EVPN domains)"])
-        for bb in range(1, _BB_COUNT + 1):
+        for bb in range(1, spec.capacity.bb_count + 1):
             bb_mac = generate_mac(spec.serial_prefix, f"bb{bb}")
             lines.extend(
                 [
@@ -413,7 +477,8 @@ def emit_act_yaml(spec: FabricSpec) -> str:
                 ]
             )
     for site in sites:
-        lines.extend(_site_node_lines(spec, site))
+        site_index = None if site is None else site_ordinal(site, named_sites)
+        lines.extend(_site_node_lines(spec, site, site_index))
 
     lines.extend(
         [
@@ -427,7 +492,7 @@ def emit_act_yaml(spec: FabricSpec) -> str:
     for site in sites:
         lines.extend(_site_link_lines(spec, plan, site))
     if multi_dc:
-        lines.extend(_backbone_link_lines(spec, plan))
+        lines.extend(_backbone_link_lines(spec, plan, named_sites))
     return "\n".join(lines) + "\n"
 
 
@@ -526,6 +591,17 @@ def _prompt_fabric_mode(default: str) -> str:
             print(f"  {error}.", file=sys.stderr)
 
 
+def _prompt_choice_redundancy(label: str, default: str) -> str:
+    from acta.capacity import normalize_redundancy
+
+    while True:
+        answer = prompt_value(f"{label} (mlag-peer|evpn-aa)", default)
+        try:
+            return normalize_redundancy(answer)
+        except ValueError as error:
+            print(f"  {error}.", file=sys.stderr)
+
+
 def _prompt_use_case(default: str) -> str:
     while True:
         answer = prompt_value(
@@ -578,6 +654,26 @@ def run_create(
         maximum=MAX_DC,
     )
     multi_dc = dc_count > 1
+    site_names: tuple[str, ...] = ()
+    if multi_dc:
+        collected: list[str] = []
+        for index in range(dc_count):
+            default = (
+                SITE_LETTERS[index] if index < len(SITE_LETTERS) else f"site{index+1}"
+            )
+            while True:
+                raw = prompt_value(f"Site {index + 1} name", default).strip()
+                try:
+                    token = validate_site_token(raw)
+                except ValueError as error:
+                    print(f"  {error}", file=sys.stderr)
+                    continue
+                if token in collected:
+                    print(f"  site {token!r} already used", file=sys.stderr)
+                    continue
+                collected.append(token)
+                break
+        site_names = tuple(collected)
     cached_use = config.get("USE_CASE") or "datacenter"
     try:
         cached_use = _normalize_use_case(cached_use)
@@ -653,6 +749,32 @@ def run_create(
             minimum=0,
             maximum=HARD_PORT_MAX,
         )
+        bb_redundancy = "mlag-peer"
+        border_redundancy = "mlag-peer"
+        bb_count = 2
+        border_count = 2
+        if multi_dc:
+            bb_redundancy = _prompt_choice_redundancy(
+                "Backbone redundancy",
+                config.get("BB_REDUNDANCY", "mlag-peer"),
+            )
+            bb_count = _prompt_int(
+                "Backbone node count",
+                max(2, _configured_int(config, "BB_COUNT", 2)),
+                minimum=2 if bb_redundancy == "evpn-aa" else 1,
+                maximum=4,
+            )
+            if fabric_mode == "l3ls":
+                border_redundancy = _prompt_choice_redundancy(
+                    "Border redundancy",
+                    config.get("BORDER_REDUNDANCY", "mlag-peer"),
+                )
+                border_count = _prompt_int(
+                    "Border leaves per site",
+                    max(2, _configured_int(config, "BORDER_COUNT", 2)),
+                    minimum=2 if border_redundancy == "evpn-aa" else 1,
+                    maximum=4,
+                )
         capacity = Capacity(
             fabric_mode=fabric_mode,
             max_spines=max_spines,
@@ -661,6 +783,10 @@ def run_create(
             spines=spines,
             leaves=leaves,
             use_case=use_case,
+            bb_redundancy=bb_redundancy,
+            border_redundancy=border_redundancy,
+            bb_count=bb_count,
+            border_count=border_count,
         )
         try:
             validate_create_capacity(capacity)
@@ -672,10 +798,14 @@ def run_create(
         "Pair leaves into MLAG pairs (y/n)",
         config.get("MLAG_PAIRS", "n").casefold() in {"y", "yes"},
     )
-    spine_mlag = spines == 2 and _prompt_yes_no(
-        "Add MLAG peer-links between spines (y/n)",
-        default=True,
-    )
+    # Spine MLAG is an L2LS pattern only. L3LS spines stay independent; asking
+    # here would invite wrong peer links on a routed leaf-spine fabric.
+    spine_mlag = False
+    if fabric_mode in {"l2ls", "l2"} and spines == 2:
+        spine_mlag = _prompt_yes_no(
+            "Add MLAG peer-links between spines (y/n)",
+            default=True,
+        )
 
     member_leaf_pairs: list[int] = []
     member_leaves_per_pair = 0
@@ -715,6 +845,7 @@ def run_create(
         member_leaf_pairs=member_leaf_pairs,
         member_leaves_per_pair=member_leaves_per_pair,
         dc_count=dc_count,
+        sites=site_names,
     )
     topology = emit_act_yaml(spec)
     output_path = (

@@ -1,0 +1,5 @@
+# Jumphost image is derived from srl-labs network-multitool and must stay root:
+# dropbear SSH, lldpd, and mcast-tools raw sockets all need privileges in lab use.
+# DS-0002 / AVD-DS-0002 would force a non-root USER that breaks that contract.
+DS-0002
+AVD-DS-0002

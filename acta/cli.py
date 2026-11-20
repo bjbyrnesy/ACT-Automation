@@ -17,9 +17,10 @@ from acta.create import run_create
 from acta.extend import ExtendResult, extend_topology, topology_sites
 from acta.onboard_act import CVAAS_PORT_DEFAULT, run_onboard_act
 from acta.prompt import prompt_value
+from acta.site_extend import extend_add_site
 from acta.upload import DEFAULT_ACT_TENANT, run_upload
 
-_ADD_CHOICES = ("spine", "leaf", "pair", "mleaf")
+_ADD_CHOICES = ("spine", "leaf", "pair", "mleaf", "site")
 _CVAAS_HOST_PROD = "apiserver.arista.io"
 _CVAAS_HOST_STAGING = "apiserver.cv-staging.corp.arista.io"
 _PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -89,9 +90,50 @@ def build_parser() -> argparse.ArgumentParser:
     extend.add_argument(
         "--site",
         help=(
-            "Site letter (A-D); required for multi-DC topologies "
+            "Existing site token for leaf/spine/mleaf/pair on multi-DC labs "
             "(prompted when omitted in an interactive terminal)"
         ),
+    )
+    extend.add_argument(
+        "--name",
+        help="New site token when --add site (e.g. aus, dfw-campus)",
+    )
+    extend.add_argument(
+        "--first-site",
+        help=(
+            "Name for the existing fabric when --add site promotes a "
+            "single-site topology (default: A)"
+        ),
+    )
+    extend.add_argument(
+        "--bb-redundancy",
+        choices=("mlag-peer", "evpn-aa"),
+        help="Backbone redundancy when promoting (default: mlag-peer)",
+    )
+    extend.add_argument(
+        "--border-redundancy",
+        choices=("mlag-peer", "evpn-aa"),
+        help="Border redundancy when promoting L3LS (default: mlag-peer)",
+    )
+    extend.add_argument(
+        "--bb-count",
+        type=int,
+        help="Backbone node count when promoting (default: 2)",
+    )
+    extend.add_argument(
+        "--border-count",
+        type=int,
+        help="Border leaf count per site when promoting L3LS (default: 2)",
+    )
+    extend.add_argument(
+        "--rekey-identity",
+        action="store_true",
+        help="On promote, rewrite serial/MAC to match new hostnames",
+    )
+    extend.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip RAM confirmation when projected cEOS exceed ~24",
     )
     extend.add_argument(
         "--pair",
@@ -116,7 +158,10 @@ def build_parser() -> argparse.ArgumentParser:
     output.add_argument(
         "--new",
         action="store_true",
-        help="Write a new dated topology file beside the input",
+        help=(
+            "Write a new dated topology file beside the input "
+            "(always used for --add site)"
+        ),
     )
 
     upload = act_sub.add_parser(
@@ -292,6 +337,53 @@ def _print_extend_result(result: ExtendResult) -> None:
     print(result.free_slots_summary())
 
 
+def _run_extend_site(args: argparse.Namespace) -> int:
+    interactive = sys.stdin.isatty()
+    name: str | None = args.name
+    if name is None:
+        if not interactive:
+            print(
+                "ERROR: --name is required when --add site",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+        name = prompt_value("New site name (e.g. aus)").strip()
+    first_site: str | None = args.first_site
+    if first_site is None and interactive and not topology_sites(args.topology):
+        # Single-site promote: offer a name for the existing fabric.
+        first_site = prompt_value(
+            "Name for existing site when promoting (default A)", "A"
+        ).strip()
+    if args.new and args.out is not None:
+        print("ERROR: --out and --new are mutually exclusive", file=sys.stderr)
+        return 2
+    try:
+        result = extend_add_site(
+            args.topology,
+            name,
+            first_site=first_site or None,
+            rekey_identity=args.rekey_identity,
+            bb_redundancy=args.bb_redundancy,
+            border_redundancy=args.border_redundancy,
+            bb_count=args.bb_count,
+            border_count=args.border_count,
+            force=args.force,
+            out=args.out,
+        )
+    except (ValueError, FileExistsError, OSError) as error:
+        print(f"ERROR: {error}", file=sys.stderr, flush=True)
+        return 1
+    print(f"Wrote {result.path}")
+    if result.added_nodes:
+        print(f"Added: {', '.join(result.added_nodes)}")
+    for warning in result.warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+    for message in result.messages:
+        print(message)
+    return 0
+
+
 def _run_extend(args: argparse.Namespace) -> int:
     interactive = sys.stdin.isatty()
     add: str | None = args.add
@@ -304,6 +396,8 @@ def _run_extend(args: argparse.Namespace) -> int:
             )
             return 2
         add = _prompt_choice("What to add", _ADD_CHOICES)
+    if add == "site":
+        return _run_extend_site(args)
     site: str | None = args.site
     pair: int | None = args.pair
     if interactive and site is None:

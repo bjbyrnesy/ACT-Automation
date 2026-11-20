@@ -50,16 +50,15 @@ def test_run_create_clamps_cached_member_leaf_default(
             "",
             "",  # sites (default 1)
             "",  # use case (default datacenter)
-            "",
-            "",
-            "",
-            "",
-            "1",
-            "y",
-            "",
-            "1",
-            "",
-            "",
+            "",  # spines
+            "",  # leaves
+            "",  # max spines
+            "",  # max leaves
+            "1",  # max mleafs
+            "y",  # leaf mlag (no spine-MLAG prompt for non-l2ls)
+            "1",  # member leaf pairs
+            "",  # member leaves per pair
+            "",  # eos
         ]
     )
     monkeypatch.setattr(create.sys.stdin, "isatty", lambda: True)
@@ -95,8 +94,7 @@ def test_run_create_for_clab_writes_lab(
             "",
             "",
             "0",  # max mleafs
-            "n",
-            "",  # spine mlag
+            "n",  # leaf mlag (single-site: no spine-MLAG prompt)
             "",
         ]
     )
@@ -129,6 +127,8 @@ def test_run_create_asks_sites_and_fabric_mode(
             "demo",
             "",
             "2",  # sites
+            "",  # site 1 name → A
+            "",  # site 2 name → B
             "",  # use case (default datacenter)
             "l3ls",
             "",  # spines per site
@@ -136,8 +136,11 @@ def test_run_create_asks_sites_and_fabric_mode(
             "",  # max spines
             "",  # max leaves
             "0",  # max mleafs
-            "n",  # leaf mlag
-            "",  # spine mlag (spines==2)
+            "",  # bb redundancy → mlag-peer
+            "",  # bb count → 2
+            "",  # border redundancy → mlag-peer
+            "",  # border count → 2
+            "n",  # leaf mlag (l3ls: no spine-MLAG prompt)
             "",  # eos
         ]
     )
@@ -155,9 +158,13 @@ def test_run_create_asks_sites_and_fabric_mode(
     assert any(label.startswith("Number of sites") for label in labels)
     assert any(label.startswith("Fabric mode") for label in labels)
     assert any(label == "Spines per site" for label in labels)
+    assert not any(
+        "spines" in label.casefold() and "mlag" in label.casefold() for label in labels
+    )
     assert "demo-A-border1:" in text
     assert "demo-bb1:" in text
     assert "fabric_mode=l3ls" in text
+    assert "Spine MLAG peer" not in text
     cached = create.load_config(tmp_path / ".config")
     assert cached["DC_COUNT"] == "2"
     assert cached["FABRIC_MODE"] == "l3ls"
@@ -302,31 +309,37 @@ def test_multi_dc_l3ls_emit_has_border_and_bb():
 
 
 def test_multi_dc_l3ls_ports_follow_reserved_blocks():
-    spec = _multi_dc_spec("l3ls", spine_mlag=True)
-    text = emit_act_yaml(spec)
+    text = emit_act_yaml(_multi_dc_spec("l3ls"))
     links = _endpoints(text)
-    # border <-> spine uses spine ports after max_leaves + spine MLAG block.
+    # border <-> spine uses spine ports after max_leaves + reserved spine MLAG block.
     assert ("demo-B-border1", 2, "demo-B-spine2", 11) in links
     assert ("demo-B-border2", 2, "demo-B-spine2", 12) in links
-    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) in links
+    # L3LS never emits spine peer links.
+    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) not in links
     # border MLAG peer then border <-> bb after max_spines.
     assert ("demo-A-border1", 5, "demo-A-border2", 5) in links
     assert ("demo-A-border1", 7, "demo-bb1", 1) in links
     assert ("demo-B-border2", 8, "demo-bb2", 4) in links
-    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+    # Peer reserved after max-site block so later site adds do not renumber.
+    assert ("demo-bb1", 15, "demo-bb2", 15) in links
     # leaf mesh and MLAG are unchanged per site.
     assert ("demo-B-spine1", 2, "demo-B-leaf2", 1) in links
     assert ("demo-B-leaf1", 5, "demo-B-leaf2", 5) in links
 
 
+def test_l3ls_rejects_spine_mlag():
+    with pytest.raises(ValueError, match="L3LS.*spine MLAG"):
+        emit_act_yaml(_multi_dc_spec("l3ls", spine_mlag=True))
+
+
 def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
     text = emit_act_yaml(_multi_dc_spec("l2ls"))
-    assert "border" not in text
+    assert "-border" not in text
     links = _endpoints(text)
     assert ("demo-A-spine1", 11, "demo-bb1", 1) in links
     assert ("demo-A-spine2", 12, "demo-bb2", 2) in links
     assert ("demo-B-spine1", 11, "demo-bb1", 3) in links
-    assert ("demo-bb1", 5, "demo-bb2", 5) in links
+    assert ("demo-bb1", 15, "demo-bb2", 15) in links
 
 
 def test_multi_dc_leaf_growth_does_not_move_uplinks():
@@ -341,13 +354,25 @@ def test_multi_dc_leaf_growth_does_not_move_uplinks():
     assert uplinks <= _endpoints(grown)
 
 
+def test_emit_named_sites():
+    spec = _multi_dc_spec("l3ls")
+    named = replace(spec, dc_count=2, sites=("dfw", "aus"))
+    text = emit_act_yaml(named)
+    assert "demo-aus-spine1:" in text
+    assert "demo-dfw-border1:" in text
+    # Sorted ordinal: aus=0 ports 1-2, dfw=1 ports 3-4.
+    links = _endpoints(text)
+    assert ("demo-aus-border1", 7, "demo-bb1", 1) in links
+    assert ("demo-dfw-border1", 7, "demo-bb1", 3) in links
+
+
 def test_multi_dc_rejects_bad_mode_and_uplink_overflow():
-    with pytest.raises(ValueError, match="dc_count"):
+    with pytest.raises(ValueError, match="sites|backbone port|dc_count|explicit"):
         emit_act_yaml(_multi_dc_spec("l3ls", dc_count=5))
     spec = _multi_dc_spec("l3ls")
     with pytest.raises(ValueError, match="fabric_mode"):
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, fabric_mode=None)))
-    with pytest.raises(ValueError, match="hard cap"):
+    with pytest.raises(ValueError, match="hard (cap|max)"):
         emit_act_yaml(replace(spec, capacity=replace(spec.capacity, max_leaves=13)))
 
 
@@ -384,7 +409,7 @@ def test_validate_spec_rejects_multi_dc_member_leaves_over_site_block():
         member_leaves_per_pair=5,
         dc_count=2,
     )
-    with pytest.raises(ValueError, match="15 member leaves.*limit of 12 per site"):
+    with pytest.raises(ValueError, match="15 member leaves.*limit of 8 per site"):
         emit_act_yaml(spec)
 
 
@@ -393,9 +418,9 @@ def test_node_address_bounds():
     assert create.node_address("leaf", 1) == 21
     with pytest.raises(ValueError, match="spine10"):
         create.node_address("spine", 10)
-    with pytest.raises(ValueError, match="mleaf13"):
-        create.node_address("mleaf", 13, site_index=0)
-    with pytest.raises(ValueError, match="leaf40"):
-        create.node_address("leaf", 40, site_index=1)
+    with pytest.raises(ValueError, match="mleaf9"):
+        create.node_address("mleaf", 9, site_index=0)
+    with pytest.raises(ValueError, match="leaf10"):
+        create.node_address("leaf", 10, site_index=1)
     with pytest.raises(ValueError, match="unknown"):
         create.node_address("border", 1)
