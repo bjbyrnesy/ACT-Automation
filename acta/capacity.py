@@ -36,7 +36,7 @@ def parse_capacity_header(text: str) -> Capacity:
     if not matches:
         raise ValueError(
             "missing # capacity: header "
-            "(only topologies written by acta.py create can be extended)"
+            "(only topologies written by acta.py act create can be extended)"
         )
     merged: dict[str, str] = {}
     for match in matches:

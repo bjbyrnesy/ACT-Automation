@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_acta_help_lists_core_commands():
+def test_acta_help_lists_platform_namespaces():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "acta.py"), "--help"],
         check=False,
@@ -14,13 +14,29 @@ def test_acta_help_lists_core_commands():
     )
     assert proc.returncode == 0
     out = proc.stdout
-    for name in ("create", "extend", "upload", "onboard", "clab"):
+    assert "{act,clab}" in out or ("act" in out and "clab" in out)
+    # Top-level verbs must not remain as peer commands of act/clab.
+    usage = out.splitlines()[0]
+    assert "create" not in usage
+    assert "upload" not in usage
+
+
+def test_act_help_lists_subcommands():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "act", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    out = proc.stdout
+    for name in ("create", "extend", "upload", "onboard"):
         assert name in out
 
 
 def test_create_help_mentions_for_target():
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "acta.py"), "create", "--help"],
+        [sys.executable, str(ROOT / "acta.py"), "act", "create", "--help"],
         check=False,
         capture_output=True,
         text=True,
@@ -32,7 +48,7 @@ def test_create_help_mentions_for_target():
 
 def test_upload_help_mentions_topology():
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "acta.py"), "upload", "--help"],
+        [sys.executable, str(ROOT / "acta.py"), "act", "upload", "--help"],
         check=False,
         capture_output=True,
         text=True,
@@ -44,7 +60,7 @@ def test_upload_help_mentions_topology():
 
 def test_onboard_help_mentions_lab():
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "acta.py"), "onboard", "--help"],
+        [sys.executable, str(ROOT / "acta.py"), "act", "onboard", "--help"],
         check=False,
         capture_output=True,
         text=True,
@@ -53,6 +69,16 @@ def test_onboard_help_mentions_lab():
     out = proc.stdout.casefold()
     assert "lab" in out
     assert "terminattr" in out or "cvaas" in out
+
+
+def test_top_level_onboard_is_unknown():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "onboard", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
 
 
 def test_clab_help_lists_subcommands():

@@ -29,13 +29,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="acta.py",
         description=(
-            "ACT Automation — create, extend, upload, and onboard fabric labs "
-            "(ACT + containerlab). Capacity reserved at create time; extend only "
-            "uses unused ports (existing endpoints stay fixed)."
+            "ACT Automation — equal platform namespaces: "
+            "acta.py act … (ACT) and acta.py clab … (containerlab). "
+            "Capacity reserved at create time; extend only uses unused ports "
+            "(existing endpoints stay fixed)."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    create = sub.add_parser(
+
+    act = sub.add_parser(
+        "act",
+        help="ACT: create, extend, upload, onboard vEOS labs",
+    )
+    act_sub = act.add_subparsers(dest="act_command", required=True)
+
+    create = act_sub.add_parser(
         "create",
         help=(
             "Interactive topology create (pinned serials/MACs, "
@@ -60,7 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--image",
         help="cEOS image when --for clab/both (default: CLAB_IMAGE / EOS_VERSION)",
     )
-    extend = sub.add_parser(
+
+    extend = act_sub.add_parser(
         "extend",
         help="Grow an existing topology on unused ports",
         description=(
@@ -110,7 +119,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write a new dated topology file beside the input",
     )
-    upload = sub.add_parser(
+
+    upload = act_sub.add_parser(
         "upload",
         help="Upload topology YAML to ACT; optional lab create/deploy",
     )
@@ -135,7 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--tenant",
         help="ACT tenant (default: ACT_TENANT / prompt)",
     )
-    sub.add_parser(
+
+    act_sub.add_parser(
         "onboard",
         help="Onboard a Running ACT lab to CVaaS (TerminAttr over SSH)",
         description=(
@@ -143,6 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
             "onboarding over SSH to vEOS devices for CVaaS."
         ),
     )
+
     clab = sub.add_parser(
         "clab",
         help="Containerlab: generate, deploy, onboard cEOS labs",
@@ -416,20 +428,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(raw)
     try:
-        if args.command == "create":
-            run_create(
-                Path.cwd(),
-                create_for=args.create_for,
-                clab_name=args.name,
-                clab_image=args.image,
+        if args.command == "act":
+            if args.act_command == "create":
+                run_create(
+                    Path.cwd(),
+                    create_for=args.create_for,
+                    clab_name=args.name,
+                    clab_image=args.image,
+                )
+                return 0
+            if args.act_command == "extend":
+                return _run_extend(args)
+            if args.act_command == "upload":
+                return _run_upload(args)
+            if args.act_command == "onboard":
+                return _run_onboard()
+            print(
+                f"ERROR: act command {args.act_command!r} not implemented yet",
+                flush=True,
             )
-            return 0
-        if args.command == "extend":
-            return _run_extend(args)
-        if args.command == "upload":
-            return _run_upload(args)
-        if args.command == "onboard":
-            return _run_onboard()
+            return 2
     except (
         EOFError,
         FileNotFoundError,

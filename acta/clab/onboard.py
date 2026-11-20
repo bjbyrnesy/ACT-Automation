@@ -14,6 +14,7 @@ from .support import (
     DOCKER_SCRIPT,
     config_flag,
     config_ip_list,
+    container_name,
     fail,
     host_run,
     inventory_hostname,
@@ -28,7 +29,7 @@ from .support import (
 
 def check_onboarding_host(host, lab, runtime=None):
     hint = " Use --host user@lab-host if your lab runs remotely." if not host else ""
-    expected = {f"clab-{lab['name']}-{node}" for node in lab["topology"]["nodes"]}
+    expected = {container_name(lab, node) for node in lab["topology"]["nodes"]}
     candidates = {
         "docker": ("docker", "sudo-docker"),
         "podman": ("podman", "sudo-podman"),
@@ -144,7 +145,7 @@ def onboard(args):
         return
     failures = []
     for node in lab["topology"]["nodes"]:
-        container = f"clab-{lab['name']}-{node}"
+        container = container_name(lab, node)
         node_data = lab["topology"]["nodes"][node]
         env = node_data.get("env", {})
         hostname = inventory_hostname(lab["name"], node, node_data)

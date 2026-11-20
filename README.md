@@ -9,7 +9,7 @@ Using ACT with CVaaS can be painful for a few reasons:
 1. If you need to change a *single link* or add/remove a node, the entire lab must be **destroyed and recreated**.
 2. Automating a VM that has ZTP configuration & connectivity necessary to tie EOS devices to CVaaS must be re-deployed every time a topology change is made. Painful.
 
-This tool solves those problems by assigning a **static MAC** & **serial** to every device (`acta.py create`) and by automatically discovering, SSH-ing into and pasting the onboarding token into every EOS device so new/existing devices show up in CVaaS.
+This tool solves those problems by assigning a **static MAC** & **serial** to every device (`acta.py act create`) and by automatically discovering, SSH-ing into and pasting the onboarding token into every EOS device so new/existing devices show up in CVaaS.
 
 ## When should I use it? ⏱️
 
@@ -34,10 +34,10 @@ Optional: Graphviz `dot` — if installed, `create` and `extend` also write or r
 
 ```bash
 uv sync --extra dev
-uv run python acta.py create
-uv run python acta.py extend topology-….yml --add leaf
-uv run python acta.py upload topology-….yml
-uv run python acta.py onboard
+uv run python acta.py act create
+uv run python acta.py act extend topology-….yml --add leaf
+uv run python acta.py act upload topology-….yml
+uv run python acta.py act onboard
 uv run python acta.py clab generate …
 uv run python acta.py clab deploy …
 uv run python acta.py clab onboard …
@@ -52,9 +52,9 @@ uv run python acta.py clab onboard …
 - **Soft max:** from the `# capacity:` header. Growth inside the plan uses reserved free ports (no warning). Growth past soft max is allowed with a warning; new links may use the next free Ethernet ≤16.
 - **Hard stop:** **16 Ethernet ports per switch**. Extend fails if it would need Ethernet17+.
 - **L2 spines:** hard-capped at **2** (not a soft max).
-- Existing `node:Ethernet` endpoints never change on extend. Missing or invalid capacity header → hard fail; recreate with `acta.py create`.
+- Existing `node:Ethernet` endpoints never change on extend. Missing or invalid capacity header → hard fail; recreate with `acta.py act create`.
 
-Run `uv run python acta.py extend --help` for flags (`--add`, `--site`, `--pair`, `--count`, `--out`, `--new`).
+Run `uv run python acta.py act extend --help` for flags (`--add`, `--site`, `--pair`, `--count`, `--out`, `--new`).
 
 ## MacOS Users 🍎
 
@@ -82,14 +82,14 @@ On your laptop:
 3. Sync deps and run create:
    ```bash
    uv sync --extra dev
-   uv run python acta.py create
+   uv run python acta.py act create
    ```
 4. Answer the prompts (size + capacity + fabric mode) to build a topology for ACT
-5. Upload with `uv run python acta.py upload <topology-file>`
+5. Upload with `uv run python acta.py act upload <topology-file>`
 6. Choose whether upload should create and deploy the lab, or do it later in the ACT UI
 
 ```bash
-uv run python acta.py create
+uv run python acta.py act create
 #   Serial prefix (e.g. bsmith): rclark
 #   Hostname prefix [rclark]:
 #   Number of datacenters/campuses (1-4) [1]:
@@ -106,7 +106,7 @@ uv run python acta.py create
 Upload the generated YAML to the ACT account associated with your API key:
 
 ```bash
-uv run python acta.py upload topology-rclark-2026-09-15.yml
+uv run python acta.py act upload topology-rclark-2026-09-15.yml
 #   ACT tenant [ce]:
 #   ACT API key: ****  (36 chars)
 #   Topology name [topology-rclark-2026-09-15.yml]:
@@ -123,17 +123,17 @@ uv run python acta.py upload topology-rclark-2026-09-15.yml
 Grow later without moving existing endpoints:
 
 ```bash
-uv run python acta.py extend topology-rclark-2026-09-15.yml --add leaf
-uv run python acta.py extend topology-rclark-2026-09-15.yml --add mleaf --pair 1
+uv run python acta.py act extend topology-rclark-2026-09-15.yml --add leaf
+uv run python acta.py act extend topology-rclark-2026-09-15.yml --add mleaf --pair 1
 ```
 
 ### Build a containerlab lab
 
 The containerlab workflow uses the same topology choices and links as the ACT
-generator. First run `uv run python acta.py create`, then convert its generated ACT YAML:
+generator. First run `uv run python acta.py act create`, then convert its generated ACT YAML:
 
 ```bash
-uv run python acta.py create
+uv run python acta.py act create
 uv run python acta.py clab generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M
 # Optional: choose a different management subnet when generating:
 # uv run python acta.py clab generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M --mgmt-subnet 10.40.0.0/23
@@ -168,12 +168,9 @@ this file to the lab host alongside the topology. Existing local and host-side
 annotations are preserved; to regenerate a layout, first back up and move aside
 the existing annotation files on both the generating machine and lab host.
 
-Container names are `clab-<lab-name>-<node>`. Keep `--name` short. A leading
-`clab-` on ACT hostnames is stripped during conversion so you get
-`clab-campus-A-mleaf1` instead of `clab-2site-campus-clab-A-mleaf1`.
-When ACT nodes already include the lab prefix (`blz-B-leaf2`), the container
-node key is shortened (`B-leaf2`) but EOS/CVaaS hostname keeps the full ACT
-name (`blz-B-leaf2`) via generate exec and onboard.
+Generated labs set `prefix: ""` so the container name equals the ACT hostname
+(`blz2-A-spine1`), not `clab-<lab>-…`. A leading `clab-` on ACT hostnames is
+still stripped during conversion (legacy ACT habit).
 
 `acta.py clab` reads optional defaults from `.config` in the current directory.
 CLI flags override. Useful keys: `CLAB_NAME`,
@@ -260,7 +257,7 @@ Use `uv run python acta.py clab --help` or `uv run python acta.py clab <command>
 
 | Argument | Description |
 | --- | --- |
-| `SOURCE` | Required ACT topology YAML produced by `acta.py create`. |
+| `SOURCE` | Required ACT topology YAML produced by `acta.py act create`. |
 | `--name NAME` | Required containerlab name: lowercase letters, numbers, and hyphens, starting with a letter or number; maximum 63 characters. |
 | `--image IMAGE` | Required cEOS image name and tag available on the lab host. |
 | `--output FILE` | Output path; defaults to `<name>.clab.yml` in the current directory. |
@@ -311,7 +308,7 @@ uv run python acta.py clab onboard rclark-lab.clab.yml --host user@lab-host --en
 4. Follow the prompts
 
 ```bash
-uv run python acta.py onboard
+uv run python acta.py act onboard
 #   ACT tenant [ce]:
 #   ACT username (e.g. firstname.lastname): ryan.clark
 #   ACT API key: ****  (36 chars)
@@ -328,7 +325,7 @@ uv run python acta.py onboard
 #     ...
 ```
 
-`acta.py onboard` reads the EOS password out of the topology's `veos:` block
+`acta.py act onboard` reads the EOS password out of the topology's `veos:` block
 (checking your local file first, then the ACT API, then falling back to
 `cvp123!`).
 
@@ -338,10 +335,10 @@ Commands, run in order:
 
 | Step | Command | What it does |
 | ---- | ------- | ------------ |
-| 1 *(optional)* | `uv run python acta.py create` | Interactively generates a topology YAML with **pinned `serial_number` + `system_mac_address`** and a `# capacity:` header. Skip if you already have a topology — `onboard` works with any vEOS topology, not just generated ones. |
-| 1b *(optional)* | `uv run python acta.py extend …` | Grow on unused ports; existing endpoints stay fixed. |
-| 2 | `uv run python acta.py upload …` | Uploads a topology to ACT via the REST API. Optionally creates and deploys a lab from it. |
-| 3 | `uv run python acta.py onboard` | Finds your Running lab via the ACT API and SSH-pastes the TerminAttr onboarding snippet to every vEOS switch. Auto-detects the EOS password from the topology's `veos:` block. |
+| 1 *(optional)* | `uv run python acta.py act create` | Interactively generates a topology YAML with **pinned `serial_number` + `system_mac_address`** and a `# capacity:` header. Skip if you already have a topology — `onboard` works with any vEOS topology, not just generated ones. |
+| 1b *(optional)* | `uv run python acta.py act extend …` | Grow on unused ports; existing endpoints stay fixed. |
+| 2 | `uv run python acta.py act upload …` | Uploads a topology to ACT via the REST API. Optionally creates and deploys a lab from it. |
+| 3 | `uv run python acta.py act onboard` | Finds your Running lab via the ACT API and SSH-pastes the TerminAttr onboarding snippet to every vEOS switch. Auto-detects the EOS password from the topology's `veos:` block. |
 
 When prompted, choose whether to create and deploy the lab immediately. If you
 decline, you can deploy the generated topology later in the ACT UI.
@@ -352,19 +349,19 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 
 | File | Purpose |
 | ---- | ------- |
-| `acta.py` | CLI entrypoint: `create`, `extend`, `upload`, `onboard`, `clab`. |
+| `acta.py` | CLI entrypoint: `act` (create/extend/upload/onboard), `clab`. |
 | `acta/` | Python package (create/extend/upload/onboard + containerlab). |
 | `pyproject.toml` | Project metadata; Python ≥3.15; `uv sync --extra dev` for pytest/ruff/black. |
-| `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `acta.py create`. Filename must be unique across the ACT tenant. |
+| `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `acta.py act create`. Filename must be unique across the ACT tenant. |
 | `.config` | Auto-generated cache of your answers (ACT/CVaaS + optional `CLAB_*`). **gitignored.** Delete to re-prompt. |
 
 ## Redeploying
 
 When you want to change the topology:
 
-1. Prefer `uv run python acta.py extend <topology> --add …` when growing on spare capacity (existing endpoints stay fixed). To rebuild from scratch, re-run `create` (new dated filename). For hand-authored topologies, edit in place.
-2. Run `uv run python acta.py upload <topology-file>` and accept the deployment prompt, or deploy later in the ACT UI.
-3. Run `uv run python acta.py onboard` and pick the new lab from the list.
+1. Prefer `uv run python acta.py act extend <topology> --add …` when growing on spare capacity (existing endpoints stay fixed). To rebuild from scratch, re-run `create` (new dated filename). For hand-authored topologies, edit in place.
+2. Run `uv run python acta.py act upload <topology-file>` and accept the deployment prompt, or deploy later in the ACT UI.
+3. Run `uv run python acta.py act onboard` and pick the new lab from the list.
 
 If the topology has pinned `serial_number` + `system_mac_address` on
 every node (via `create` or because you added them manually), CVaaS will
@@ -384,8 +381,8 @@ Be respectul to others and clean up any orphaned VM's you have built and aim to 
 ## Sharing this with someone else 🎁
 
 1. Clone the repo.
-2. Run `uv sync --extra dev`, then `uv run python acta.py onboard` against any Running lab — they enter their own ACT and CVaaS creds when prompted. Works on labs they authored anywhere.
-3. *(Optional)* Run `uv run python acta.py create` if they want pinned-identity topologies of their own. It forces them to enter their own serial prefix (the `(e.g. bsmith)` hint means it's never cached or shared).
+2. Run `uv sync --extra dev`, then `uv run python acta.py act onboard` against any Running lab — they enter their own ACT and CVaaS creds when prompted. Works on labs they authored anywhere.
+3. *(Optional)* Run `uv run python acta.py act create` if they want pinned-identity topologies of their own. It forces them to enter their own serial prefix (the `(e.g. bsmith)` hint means it's never cached or shared).
 
 ## Why TerminAttr token-secure auth instead of the bootstrap.py flow
 

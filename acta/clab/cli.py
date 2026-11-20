@@ -21,7 +21,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     gen = sub.add_parser(
         "generate",
-        help="Convert an acta.py create ACT topology to containerlab YAML",
+        help="Convert an acta.py act create ACT topology to containerlab YAML",
     )
     gen.add_argument("source")
     gen.add_argument(
@@ -111,7 +111,7 @@ def main(argv=None):
             action="store_true",
             default=from_act_default,
             help=(
-                "Accept an acta.py create topology and generate .clab.yml first "
+                "Accept an acta.py act create topology and generate .clab.yml first "
                 "(default: CLAB_FROM_ACT from .config)"
             ),
         )

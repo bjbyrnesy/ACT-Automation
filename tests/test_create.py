@@ -12,7 +12,7 @@ from acta.topology import parse_connections
 
 def test_capacity_banner_mentions_extend_commands():
     text = capacity_banner()
-    assert "acta.py extend" in text
+    assert "acta.py act extend" in text
     assert "--add leaf" in text
     assert "--add mleaf" in text
 
@@ -74,8 +74,8 @@ def test_run_create_clamps_cached_member_leaf_default(
     assert create.load_config(tmp_path / ".config")["MEMBER_LEAVES_PER_PAIR"] == "1"
     assert create.load_config(tmp_path / ".config")["DC_COUNT"] == "1"
     out = capsys.readouterr().out
-    assert "acta.py upload" in out
-    assert f"acta.py extend {output_path.name} --add leaf" in out
+    assert "acta.py act upload" in out
+    assert f"acta.py act extend {output_path.name} --add leaf" in out
     assert create.load_config(tmp_path / ".config")["CREATE_FOR"] == "act"
 
 

@@ -30,7 +30,7 @@ def test_round_trip_header():
 
 
 def test_parse_missing_header_raises():
-    with pytest.raises(ValueError, match=r"capacity.*acta\.py create"):
+    with pytest.raises(ValueError, match=r"capacity.*acta\.py act create"):
         parse_capacity_header("nodes:\n")
 
 

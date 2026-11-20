@@ -224,11 +224,11 @@ def run_upload(
         deploy = _confirm("Create and deploy a lab from this topology?")
     if not deploy:
         print("Done. Deploy the topology in the ACT UI when ready, then run:")
-        print("  acta onboard")
+        print("  acta.py act onboard")
         return
 
     default_lab = f"{topology_name.removesuffix('.yml').removesuffix('.yaml')}-lab"
     lab_name = prompt_value("Lab name", default_lab)
     _create_and_deploy_lab(client, topo_id, pathname, topology_name, lab_name)
     print("\nDone. Wait for the lab to reach Running state, then run:")
-    print("  acta onboard")
+    print("  acta.py act onboard")

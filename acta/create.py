@@ -28,8 +28,8 @@ def capacity_banner() -> str:
     return (
         "Reserve spare ports now so this topology can grow without moving existing "
         "links.\n"
-        "Later, use acta.py extend --add leaf, acta.py extend --add spine, or\n"
-        "acta.py extend --add mleaf --pair N within the limits chosen below."
+        "Later, use acta.py act extend --add leaf, acta.py act extend --add spine, or\n"
+        "acta.py act extend --add mleaf --pair N within the limits chosen below."
     )
 
 
@@ -699,8 +699,8 @@ def run_create(
     if output_for in {"clab", "both"}:
         from acta.clab.support import argparse_namespace, materialize_clab_from_act
 
-        # Lab name must match the fabric hostname prefix so nodes shorten to
-        # A-spine1 / bb1 and containers become clab-<prefix>-A-spine1.
+        # Lab name tracks the fabric hostname prefix (blz2); containers use
+        # full ACT hostnames via generate prefix:"" (blz2-A-spine1).
         resolved_clab_name = (clab_name or hostname_prefix or serial_prefix).casefold()
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", resolved_clab_name):
             resolved_clab_name = serial_prefix.casefold()
@@ -744,8 +744,8 @@ def run_create(
     act_name = output_path.name
     print("Next:")
     if output_for in {"act", "both"}:
-        print(f"  ACT:          acta.py upload {act_name}")
+        print(f"  ACT:          acta.py act upload {act_name}")
     if output_for in {"clab", "both"} and clab_path is not None:
         print(f"  containerlab: acta.py clab deploy {clab_path.name}")
-    print(f"  grow later:   acta.py extend {act_name} --add leaf")
+    print(f"  grow later:   acta.py act extend {act_name} --add leaf")
     return output_path

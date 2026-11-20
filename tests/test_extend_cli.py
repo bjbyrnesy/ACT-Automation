@@ -38,7 +38,7 @@ def _interactive(monkeypatch: pytest.MonkeyPatch, answers: list[str]) -> list[st
 
 
 def test_extend_add_is_optional_in_parser():
-    assert cli.build_parser().parse_args(["extend", "t.yml"]).add is None
+    assert cli.build_parser().parse_args(["act", "extend", "t.yml"]).add is None
 
 
 def test_extend_without_add_errors_when_not_a_tty(
@@ -47,7 +47,7 @@ def test_extend_without_add_errors_when_not_a_tty(
     capsys: pytest.CaptureFixture[str],
 ):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
-    assert cli.main(["extend", str(_write(tmp_path))]) == 2
+    assert cli.main(["act", "extend", str(_write(tmp_path))]) == 2
     assert "--add is required" in capsys.readouterr().err
 
 
@@ -59,7 +59,7 @@ def test_extend_prompts_for_add_when_tty(
     path = _write(tmp_path)
     asked = _interactive(monkeypatch, ["bogus", "LEAF"])
 
-    assert cli.main(["extend", str(path)]) == 0
+    assert cli.main(["act", "extend", str(path)]) == 0
 
     assert len(asked) == 2 and asked[0].startswith("What to add")
     assert "demo-leaf3:" in path.read_text()
@@ -72,7 +72,7 @@ def test_multi_dc_extend_prompts_for_site_when_tty(
     path = _write(tmp_path, dc_count=2)
     asked = _interactive(monkeypatch, ["b"])
 
-    assert cli.main(["extend", str(path), "--add", "leaf"]) == 0
+    assert cli.main(["act", "extend", str(path), "--add", "leaf"]) == 0
 
     assert asked == ["Site (A/B)"]
     assert "demo-B-leaf3:" in path.read_text()
@@ -86,7 +86,7 @@ def test_multi_dc_extend_without_site_errors_when_not_a_tty(
 ):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     path = _write(tmp_path, dc_count=2)
-    assert cli.main(["extend", str(path), "--add", "leaf"]) == 2
+    assert cli.main(["act", "extend", str(path), "--add", "leaf"]) == 2
     assert "requires --site" in capsys.readouterr().err
 
 
@@ -94,7 +94,7 @@ def test_single_dc_extend_does_not_prompt_for_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     asked = _interactive(monkeypatch, [])
-    assert cli.main(["extend", str(_write(tmp_path)), "--add", "leaf"]) == 0
+    assert cli.main(["act", "extend", str(_write(tmp_path)), "--add", "leaf"]) == 0
     assert asked == []
 
 
@@ -106,7 +106,7 @@ def test_extend_output_is_clean_and_lists_warnings_and_free_slots(
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     path = _write(tmp_path)
 
-    assert cli.main(["extend", str(path), "--add", "leaf", "--count", "7"]) == 0
+    assert cli.main(["act", "extend", str(path), "--add", "leaf", "--count", "7"]) == 0
 
     captured = capsys.readouterr()
     assert f"Wrote {path}" in captured.out
@@ -127,7 +127,7 @@ def test_extend_out_refuses_existing_path(
     target.write_text("original\n")
     before = path.read_text()
 
-    code = cli.main(["extend", str(path), "--add", "leaf", "--out", str(target)])
+    code = cli.main(["act", "extend", str(path), "--add", "leaf", "--out", str(target)])
 
     assert code == 2
     assert "already exists" in capsys.readouterr().err
@@ -143,7 +143,7 @@ def test_extend_new_prints_dated_path(
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
     path = _write(tmp_path)
 
-    assert cli.main(["extend", str(path), "--add", "leaf", "--new"]) == 0
+    assert cli.main(["act", "extend", str(path), "--add", "leaf", "--new"]) == 0
 
     out = capsys.readouterr().out
     assert f"Wrote {tmp_path / 'topology-demo-'}" in out
