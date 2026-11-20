@@ -38,7 +38,11 @@ GitHub Actions on every PR/push to `main`:
 - **Security** — Gitleaks (secrets), Dependency Review, CodeQL (Python + Actions), zizmor (workflow audit), Trivy (fs vulns/secrets)
 - **Dependabot** — weekly Actions + pip updates
 
-Never commit `.config`, `.env`, or enrollment tokens; they stay gitignored. Enable **Secret scanning** / **Push protection** in the repo’s GitHub Security settings for an extra gate on `git push`.
+Never commit `.config`, `.env`, or enrollment tokens; they stay gitignored. In the repo’s GitHub **Settings → Code security**, enable:
+
+- Secret scanning + Push protection
+- Dependency graph (needed for Dependency Review on PRs)
+- Code scanning (CodeQL uploads findings to the Security tab)
 
 ## Quickstart 🏎️
 

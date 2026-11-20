@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 import shutil
 import subprocess
@@ -351,7 +352,7 @@ def _append_host_ranks(
             f"{indent}{anchors[0].dot_id} -> {rows[0][0].dot_id} "
             f"[style=invis, weight=100];"
         )
-    for upper, lower in zip(rows, rows[1:]):
+    for upper, lower in itertools.pairwise(rows):
         lines.append(
             f"{indent}{upper[0].dot_id} -> {lower[0].dot_id} "
             f"[style=invis, weight=100];"
