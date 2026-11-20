@@ -321,7 +321,7 @@ def test_multi_dc_l3ls_ports_follow_reserved_blocks():
 
 def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
     text = emit_act_yaml(_multi_dc_spec("l2ls"))
-    assert "border" not in text
+    assert "-border" not in text
     links = _endpoints(text)
     assert ("demo-A-spine1", 11, "demo-bb1", 1) in links
     assert ("demo-A-spine2", 12, "demo-bb2", 2) in links

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 HARD_PORT_MAX = 16
 USE_CASES = frozenset({"datacenter", "campus"})
 FABRIC_MODES = frozenset({"l3ls", "l2ls"})
+REDUNDANCY_MODES = frozenset({"mlag-peer", "evpn-aa"})
+BACKBONE_MODES = frozenset({"hub"})
 
 _HEADER_RE = re.compile(
     r"^#\s*capacity:\s*(?P<body>.+)$",
@@ -22,6 +24,11 @@ class Capacity:
     spines: int
     leaves: int
     use_case: str | None = None
+    bb_redundancy: str = "mlag-peer"
+    border_redundancy: str = "mlag-peer"
+    bb_count: int = 2
+    border_count: int = 2
+    backbone_mode: str = "hub"
 
 
 def normalize_fabric_mode(value: str | None) -> str | None:
@@ -51,6 +58,28 @@ def normalize_use_case(value: str | None) -> str | None:
     if folded in {"campus"}:
         return "campus"
     raise ValueError("use case must be datacenter or campus")
+
+
+def normalize_redundancy(value: str | None, *, default: str = "mlag-peer") -> str:
+    """Normalize backbone/border redundancy to ``mlag-peer`` or ``evpn-aa``."""
+    if value is None or not str(value).strip():
+        return default
+    folded = str(value).strip().casefold().replace("_", "-")
+    if folded in {"mlag-peer", "mlag", "peer"}:
+        return "mlag-peer"
+    if folded in {"evpn-aa", "evpnaa", "aa", "esi"}:
+        return "evpn-aa"
+    raise ValueError("redundancy must be mlag-peer or evpn-aa")
+
+
+def normalize_backbone_mode(value: str | None, *, default: str = "hub") -> str:
+    """Normalize backbone mode (near-term: ``hub`` only)."""
+    if value is None or not str(value).strip():
+        return default
+    folded = str(value).strip().casefold()
+    if folded in BACKBONE_MODES:
+        return folded
+    raise ValueError("backbone_mode must be hub")
 
 
 def _parse_body(body: str) -> dict[str, str]:
@@ -87,6 +116,11 @@ def parse_capacity_header(text: str) -> Capacity:
     use_case = None
     if "use_case" in merged:
         use_case = normalize_use_case(merged.get("use_case"))
+    bb_redundancy = normalize_redundancy(merged.get("bb_redundancy"))
+    border_redundancy = normalize_redundancy(merged.get("border_redundancy"))
+    bb_count = int(merged.get("bb_count") or 2)
+    border_count = int(merged.get("border_count") or 2)
+    backbone_mode = normalize_backbone_mode(merged.get("backbone_mode"))
     return Capacity(
         fabric_mode=mode,
         max_spines=int(merged["max_spines"]),
@@ -95,18 +129,31 @@ def parse_capacity_header(text: str) -> Capacity:
         spines=int(merged["spines"]),
         leaves=int(merged["leaves"]),
         use_case=use_case,
+        bb_redundancy=bb_redundancy,
+        border_redundancy=border_redundancy,
+        bb_count=bb_count,
+        border_count=border_count,
+        backbone_mode=backbone_mode,
     )
 
 
 def format_capacity_header(cap: Capacity) -> str:
     mode = normalize_fabric_mode(cap.fabric_mode) or "none"
     use_case = normalize_use_case(cap.use_case) or "none"
+    bb_redundancy = normalize_redundancy(cap.bb_redundancy)
+    border_redundancy = normalize_redundancy(cap.border_redundancy)
+    backbone_mode = normalize_backbone_mode(cap.backbone_mode)
     line1 = (
         f"# capacity: fabric_mode={mode} use_case={use_case} "
         f"max_spines={cap.max_spines} "
         f"max_leaves={cap.max_leaves} max_mleafs_per_pair={cap.max_mleafs_per_pair}"
     )
-    line2 = f"# capacity: spines={cap.spines} leaves={cap.leaves}"
+    line2 = (
+        f"# capacity: spines={cap.spines} leaves={cap.leaves} "
+        f"backbone_mode={backbone_mode} "
+        f"bb_redundancy={bb_redundancy} bb_count={cap.bb_count} "
+        f"border_redundancy={border_redundancy} border_count={cap.border_count}"
+    )
     return f"{line1}\n{line2}\n"
 
 
@@ -137,6 +184,17 @@ def validate_create_capacity(cap: Capacity) -> None:
         raise ValueError("L2LS fabric spines hard-capped at 2")
     if cap.max_spines > HARD_PORT_MAX or cap.max_leaves > HARD_PORT_MAX:
         raise ValueError(f"planned width cannot exceed {HARD_PORT_MAX} ports")
+    bb_redundancy = normalize_redundancy(cap.bb_redundancy)
+    border_redundancy = normalize_redundancy(cap.border_redundancy)
+    normalize_backbone_mode(cap.backbone_mode)
+    if bb_redundancy == "evpn-aa" and cap.bb_count < 2:
+        raise ValueError("evpn-aa backbone requires bb_count >= 2")
+    if border_redundancy == "evpn-aa" and cap.border_count < 2:
+        raise ValueError("evpn-aa borders require border_count >= 2")
+    if cap.bb_count < 1:
+        raise ValueError("bb_count must be >= 1")
+    if cap.border_count < 1:
+        raise ValueError("border_count must be >= 1")
     validate_reserved_port_budget(cap)
 
 

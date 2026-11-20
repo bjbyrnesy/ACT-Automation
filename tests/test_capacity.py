@@ -22,11 +22,32 @@ def test_round_trip_header():
         max_mleafs_per_pair=2,
         spines=2,
         leaves=4,
+        bb_redundancy="evpn-aa",
+        border_redundancy="mlag-peer",
+        bb_count=3,
+        border_count=2,
+        backbone_mode="hub",
     )
     text = format_capacity_header(cap)
     assert "max_spines=4" in text
+    assert "bb_redundancy=evpn-aa" in text
+    assert "bb_count=3" in text
     got = parse_capacity_header(text)
     assert got == cap
+
+
+def test_parse_legacy_header_defaults_redundancy():
+    text = (
+        "# capacity: fabric_mode=l3ls use_case=datacenter "
+        "max_spines=4 max_leaves=8 max_mleafs_per_pair=0\n"
+        "# capacity: spines=2 leaves=4\n"
+    )
+    got = parse_capacity_header(text)
+    assert got.bb_redundancy == "mlag-peer"
+    assert got.border_redundancy == "mlag-peer"
+    assert got.bb_count == 2
+    assert got.border_count == 2
+    assert got.backbone_mode == "hub"
 
 
 def test_parse_missing_header_raises():
