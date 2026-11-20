@@ -83,8 +83,13 @@ def _peer_ports(text: str, leaf_a: str, leaf_b: str) -> list[int]:
 
 
 def _site_of(name: str) -> str:
-    match = re.search(r"-(?P<site>[A-D])-", name)
-    return match.group("site") if match else "-"
+    from acta.site_names import parse_fabric_identity
+
+    parsed = parse_fabric_identity(name)
+    if parsed is None:
+        return "-"
+    site, _role, _index = parsed
+    return site if site is not None else "-"
 
 
 def _strip_ip(value: str) -> str:

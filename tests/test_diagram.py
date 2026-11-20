@@ -79,6 +79,40 @@ def test_multi_dc_dot_uses_site_clusters_and_backbone():
     assert "A_border1 -> bb1" in dot or "A_border1 -> bb2" in dot
 
 
+def test_named_site_multi_dc_dot_keeps_both_sites():
+    text = emit_act_yaml(
+        FabricSpec(
+            hostname_prefix="blz3",
+            serial_prefix="blz3",
+            eos_version="4.35.4M",
+            capacity=Capacity(
+                fabric_mode="l3ls",
+                max_spines=4,
+                max_leaves=8,
+                max_mleafs_per_pair=2,
+                spines=2,
+                leaves=4,
+            ),
+            mlag_pairs=True,
+            spine_mlag=False,
+            member_leaf_pairs=[1],
+            member_leaves_per_pair=1,
+            dc_count=2,
+            sites=("msp", "mso"),
+        )
+    )
+    dot = topology_to_dot(text)
+    assert "subgraph cluster_msp" in dot
+    assert "subgraph cluster_mso" in dot
+    assert "msp_spine1" in dot
+    assert "mso_spine1" in dot
+    assert "msp_border1" in dot
+    assert "mso_border1" in dot
+    assert "2 site" in dot
+    # Must not collapse both sites into unlabeled single-DC ranks.
+    assert "subgraph cluster_" in dot
+
+
 @pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz dot not installed")
 def test_write_png_renders_with_graphviz(tmp_path: Path):
     png = tmp_path / "topo.png"
