@@ -203,12 +203,14 @@ def _backbone_attach_lines(
     capacity: Capacity,
     plan: PortPlan,
     site_index: int,
+    spines: int,
+    include_peer: bool = True,
 ) -> list[str]:
     lines: list[str] = []
     site_prefix = f"{hostname_prefix}-{site}"
     if capacity.fabric_mode in {"l2ls", "l2"}:
-        lines.append("  # Backbone — spine <-> backbone (l2ls)")
-        for spine in range(1, capacity.spines + 1):
+        lines.append(f"  # Site {site} — spine <-> backbone")
+        for spine in range(1, spines + 1):
             bb_port = plan.bb_spine_port(site_index, spine)
             for bb, uplink in enumerate(plan.spine_uplink_ports(), start=1):
                 lines.append(
@@ -222,7 +224,7 @@ def _backbone_attach_lines(
                     )
                 )
     else:
-        lines.append("  # Backbone — border <-> backbone")
+        lines.append(f"  # Site {site} — border <-> backbone")
         for bb, border_port in enumerate(plan.border_bb_ports(), start=1):
             for border in range(1, capacity.border_count + 1):
                 lines.append(
@@ -235,7 +237,11 @@ def _backbone_attach_lines(
                         )
                     )
                 )
-    if capacity.bb_redundancy == "mlag-peer" and capacity.bb_count >= 2:
+    if (
+        include_peer
+        and capacity.bb_redundancy == "mlag-peer"
+        and capacity.bb_count >= 2
+    ):
         peer = plan.bb_peer_port()
         lines.append("  # Backbone peer link")
         lines.append(
@@ -257,13 +263,14 @@ def _border_fabric_lines(
     site: str,
     capacity: Capacity,
     plan: PortPlan,
+    spines: int,
 ) -> list[str]:
     if capacity.fabric_mode not in {"l3ls", "l3"}:
         return []
     site_prefix = f"{hostname_prefix}-{site}"
     lines = [f"  # Site {site} — border <-> spine"]
     uplinks = plan.spine_uplink_ports()
-    for spine in range(1, capacity.spines + 1):
+    for spine in range(1, spines + 1):
         for border, uplink in enumerate(uplinks, start=1):
             if border > capacity.border_count:
                 break
@@ -286,6 +293,117 @@ def _border_fabric_lines(
                         f"{site_prefix}-border1",
                         port,
                         f"{site_prefix}-border2",
+                        port,
+                    )
+                )
+            )
+    return lines
+
+
+def _site_fabric_node_lines(
+    *,
+    hostname_prefix: str,
+    serial_prefix: str,
+    site: str,
+    site_index: int,
+    capacity: Capacity,
+    spines: int,
+    leaves: int,
+) -> list[str]:
+    lines: list[str] = []
+    if capacity.fabric_mode == "l3ls":
+        lines.append(f"  # Site {site} — Border leaves")
+        for border in range(1, capacity.border_count + 1):
+            lines.append("")
+            lines.extend(
+                node_block(
+                    hostname_prefix,
+                    serial_prefix,
+                    "border",
+                    border,
+                    site=site,
+                    site_index=site_index,
+                )
+            )
+    lines.append(f"  # Site {site} — Spines")
+    for spine in range(1, spines + 1):
+        lines.append("")
+        lines.extend(
+            node_block(
+                hostname_prefix,
+                serial_prefix,
+                "spine",
+                spine,
+                site=site,
+                site_index=site_index,
+            )
+        )
+    lines.append(f"  # Site {site} — Leaves")
+    for leaf in range(1, leaves + 1):
+        lines.append("")
+        lines.extend(
+            node_block(
+                hostname_prefix,
+                serial_prefix,
+                "leaf",
+                leaf,
+                site=site,
+                site_index=site_index,
+            )
+        )
+    return lines
+
+
+def _site_fabric_link_lines(
+    *,
+    hostname_prefix: str,
+    site: str,
+    plan: PortPlan,
+    spines: int,
+    leaves: int,
+    mlag_pairs: bool,
+    spine_mlag: bool,
+) -> list[str]:
+    site_prefix = f"{hostname_prefix}-{site}"
+    lines = [f"  # Site {site} — spine <-> leaf full mesh"]
+    for spine in range(1, spines + 1):
+        for leaf in range(1, leaves + 1):
+            lines.append(
+                _connection_line(
+                    Connection(
+                        f"{site_prefix}-spine{spine}",
+                        plan.spine_to_leaf_port(leaf),
+                        f"{site_prefix}-leaf{leaf}",
+                        plan.leaf_to_spine_port(spine),
+                    )
+                )
+            )
+    if mlag_pairs and leaves >= 2:
+        lines.append(f"  # Site {site} — MLAG peer links")
+        for odd_leaf in range(1, leaves, 2):
+            even_leaf = odd_leaf + 1
+            if even_leaf > leaves:
+                break
+            for port in plan.leaf_mlag_ports():
+                lines.append(
+                    _connection_line(
+                        Connection(
+                            f"{site_prefix}-leaf{odd_leaf}",
+                            port,
+                            f"{site_prefix}-leaf{even_leaf}",
+                            port,
+                        )
+                    )
+                )
+    if spine_mlag and spines >= 2:
+        lines.append(f"  # Site {site} — Spine MLAG peer links")
+        for port in plan.spine_mlag_ports():
+            lines.append(
+                _connection_line(
+                    Connection(
+                        f"{site_prefix}-spine1",
+                        port,
+                        f"{site_prefix}-spine2",
                         port,
                     )
                 )
@@ -406,6 +524,7 @@ def ensure_multi_dc(
             site=site,
             capacity=capacity,
             plan=plan,
+            spines=capacity.spines,
         )
     )
     link_lines.extend(
@@ -415,10 +534,127 @@ def ensure_multi_dc(
             capacity=capacity,
             plan=plan,
             site_index=site_index,
+            spines=capacity.spines,
+            include_peer=True,
         )
     )
     updated = _append_lines(updated, link_lines)
     return _replace_capacity(updated, capacity)
+
+
+def add_site(
+    text: str,
+    site_name: str,
+    *,
+    spines: int | None = None,
+    leaves: int | None = None,
+    mlag_pairs: bool = True,
+    spine_mlag: bool = False,
+) -> str:
+    """Append a named site and mode-aware backbone attach to a multi-DC topology.
+
+    Site indexes are append-only (``len(existing_sites)``) so later adds never
+    renumber existing backbone endpoints. Call ``ensure_multi_dc`` first when
+    starting from a single-site lab.
+    """
+    if not _has_backbone(text):
+        raise ValueError(
+            "topology is not multi-DC; promote with ensure_multi_dc before add_site"
+        )
+
+    site = validate_site_token(site_name)
+    capacity = parse_capacity_header(text)
+    if capacity.fabric_mode is None:
+        raise ValueError("capacity header fabric_mode is required to add a site")
+
+    hostname_prefix = _detect_hostname_prefix(text)
+    serial_prefix = _detect_serial_prefix(text, hostname_prefix)
+    existing = list_sites(text, hostname_prefix)
+    if site in existing:
+        raise ValueError(f"site {site!r} already exists")
+    if len(existing) >= MAX_SITES:
+        raise ValueError(f"maximum of {MAX_SITES} sites already present")
+
+    site_index = len(existing)
+    plan = PortPlan(capacity)
+    if site_index >= plan.max_attach_sites():
+        raise ValueError(
+            f"backbone ports exhausted: at most {plan.max_attach_sites()} sites "
+            f"fit on Ethernet1..16 with current bb/border width"
+        )
+
+    site_spines = spines if spines is not None else capacity.spines
+    site_leaves = leaves if leaves is not None else capacity.leaves
+    if site_spines < 1 or site_leaves < 1:
+        raise ValueError("spines and leaves must be >= 1")
+    if site_spines > capacity.max_spines or site_leaves > capacity.max_leaves:
+        raise ValueError("requested spines/leaves exceed capacity max_*")
+
+    # Validate the new site's bb ports fit before mutating text.
+    try:
+        if capacity.fabric_mode in {"l2ls", "l2"}:
+            for spine in range(1, site_spines + 1):
+                plan.bb_spine_port(site_index, spine)
+        else:
+            for border in range(1, capacity.border_count + 1):
+                plan.bb_border_port(site_index, border)
+    except ValueError as exc:
+        raise ValueError(f"cannot add site {site!r}: {exc}") from exc
+
+    node_block_text = "\n".join(
+        _site_fabric_node_lines(
+            hostname_prefix=hostname_prefix,
+            serial_prefix=serial_prefix,
+            site=site,
+            site_index=site_index,
+            capacity=capacity,
+            spines=site_spines,
+            leaves=site_leaves,
+        )
+    )
+    marker = re.search(
+        r"^#{10,}\n# Data-plane links\n#{10,}\n", text, re.MULTILINE
+    ) or re.search(r"^links:\s*$", text, re.MULTILINE)
+    if marker is None:
+        raise ValueError("topology is missing a links section")
+    updated = (
+        f"{text[: marker.start()].rstrip()}\n\n{node_block_text}\n\n"
+        f"{text[marker.start():]}"
+    )
+
+    link_lines: list[str] = []
+    link_lines.extend(
+        _site_fabric_link_lines(
+            hostname_prefix=hostname_prefix,
+            site=site,
+            plan=plan,
+            spines=site_spines,
+            leaves=site_leaves,
+            mlag_pairs=mlag_pairs,
+            spine_mlag=spine_mlag,
+        )
+    )
+    link_lines.extend(
+        _border_fabric_lines(
+            hostname_prefix=hostname_prefix,
+            site=site,
+            capacity=capacity,
+            plan=plan,
+            spines=site_spines,
+        )
+    )
+    link_lines.extend(
+        _backbone_attach_lines(
+            hostname_prefix=hostname_prefix,
+            site=site,
+            capacity=capacity,
+            plan=plan,
+            site_index=site_index,
+            spines=site_spines,
+            include_peer=False,
+        )
+    )
+    return _append_lines(updated, link_lines)
 
 
 def list_sites(text: str, hostname_prefix: str | None = None) -> list[str]:
@@ -446,6 +682,7 @@ def projected_ceos_count(capacity: Capacity, site_count: int) -> int:
 
 __all__ = [
     "MAX_SITES",
+    "add_site",
     "ensure_multi_dc",
     "list_sites",
     "projected_ceos_count",

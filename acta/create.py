@@ -125,20 +125,21 @@ MAX_DC = 4
 SITE_LETTERS = "ABCD"
 _BB_COUNT = 2
 _BORDER_COUNT = 2
-# Multi-DC address layout mirrors generate.sh: backbone at .2/.3, then 62 per site.
+# Multi-DC address layout: backbone at .2/.3 (bb1/bb2), then 30 octets per site
+# so up to MAX_SITES=8 fit in 192.168.0.0/24. Role blocks within each site:
+# border 0-1, spine 2-10, leaf 11-21, mleaf 22-29.
 _SITE_ADDRESS_BASE = 4
-_SITE_ADDRESS_STRIDE = 62
-_MULTI_DC_ADDRESS_OFFSETS = {"border": 0, "spine": 2, "leaf": 11, "mleaf": 50}
+_SITE_ADDRESS_STRIDE = 30
+_MULTI_DC_ADDRESS_OFFSETS = {"border": 0, "spine": 2, "leaf": 11, "mleaf": 22}
 _SINGLE_DC_ADDRESS_BASES = {"spine": 10, "leaf": 20, "mleaf": 130}
-# Per-role index ceilings keep every node inside its own management-IP block
-# (generate.sh MAX_SPINES / MAX_LEAVES[_MULTI] / MAX_TOTAL_MEMBER_LEAVES[_MULTI]).
+# Per-role index ceilings keep every node inside its own management-IP block.
 MAX_ADDRESS_SPINES = 9
 _SINGLE_DC_ADDRESS_LIMITS = {"spine": MAX_ADDRESS_SPINES, "leaf": 99, "mleaf": 100}
 _MULTI_DC_ADDRESS_LIMITS = {
     "border": _BORDER_COUNT,
     "spine": MAX_ADDRESS_SPINES,
-    "leaf": 39,
-    "mleaf": 12,
+    "leaf": 11,
+    "mleaf": 8,
 }
 
 

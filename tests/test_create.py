@@ -385,7 +385,7 @@ def test_validate_spec_rejects_multi_dc_member_leaves_over_site_block():
         member_leaves_per_pair=5,
         dc_count=2,
     )
-    with pytest.raises(ValueError, match="15 member leaves.*limit of 12 per site"):
+    with pytest.raises(ValueError, match="15 member leaves.*limit of 8 per site"):
         emit_act_yaml(spec)
 
 
@@ -394,9 +394,9 @@ def test_node_address_bounds():
     assert create.node_address("leaf", 1) == 21
     with pytest.raises(ValueError, match="spine10"):
         create.node_address("spine", 10)
-    with pytest.raises(ValueError, match="mleaf13"):
-        create.node_address("mleaf", 13, site_index=0)
-    with pytest.raises(ValueError, match="leaf40"):
-        create.node_address("leaf", 40, site_index=1)
+    with pytest.raises(ValueError, match="mleaf9"):
+        create.node_address("mleaf", 9, site_index=0)
+    with pytest.raises(ValueError, match="leaf12"):
+        create.node_address("leaf", 12, site_index=1)
     with pytest.raises(ValueError, match="unknown"):
         create.node_address("border", 1)

@@ -348,7 +348,7 @@ def test_multi_dc_extend_site_b_leaf_leaves_site_a_unchanged(tmp_path: Path):
     text = path.read_text()
     assert "demo-B-leaf3:" in text
     assert "demo-A-leaf3:" not in text
-    assert "ip_addr: 192.168.0.79/24" in text  # B base 66 + 11 + 3 - 1
+    assert "ip_addr: 192.168.0.47/24" in text  # B base 34 + 11 + 3 - 1
     assert "serial_number: demo-B-leaf3" in text
     # Capacity header is per-site baseline; unchanged for multi-DC.
     assert parse_capacity_header(text) == parse_capacity_header(text_before)
@@ -473,16 +473,16 @@ def test_multi_dc_mleaf_beyond_per_site_ip_block_is_rejected_atomically(
     path = _write_multi_dc_members(tmp_path)
     before = _snapshot(tmp_path)
 
-    # Site B already has mleaf1-4; mleaf13 would spill past its 12-address block.
-    with pytest.raises(ValueError, match=r"mleaf13 exceeds.*limit of 12"):
-        extend_topology(path, add="mleaf", pair=1, site="B", count=9)
+    # Site B already has mleaf1-4; mleaf9 would spill past its 8-address block.
+    with pytest.raises(ValueError, match=r"mleaf9 exceeds.*limit of 8"):
+        extend_topology(path, add="mleaf", pair=1, site="B", count=5)
 
     assert _snapshot(tmp_path) == before
 
 
 def test_multi_dc_mleaf_up_to_per_site_ip_limit_has_unique_addresses(tmp_path: Path):
     path = _write_multi_dc_members(tmp_path)
-    extend_topology(path, add="mleaf", pair=1, site="B", count=8)
+    extend_topology(path, add="mleaf", pair=1, site="B", count=4)
     addresses = [
         line.split()[-1] for line in path.read_text().splitlines() if "ip_addr:" in line
     ]

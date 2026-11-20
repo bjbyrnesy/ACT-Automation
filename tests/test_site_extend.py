@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from acta.capacity import Capacity, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
-from acta.site_extend import ensure_multi_dc
+from acta.site_extend import MAX_SITES, add_site, ensure_multi_dc
 from acta.topology import parse_connections
 
 
@@ -153,3 +155,82 @@ def test_ensure_multi_dc_is_noop_for_existing_multi_dc():
         )
     )
     assert ensure_multi_dc(multi, first_site="aus") == multi
+
+
+def _multi(fabric_mode: str = "l3ls", **cap_kwargs) -> str:
+    return emit_act_yaml(
+        FabricSpec(
+            hostname_prefix="demo",
+            serial_prefix="demo",
+            eos_version="4.35.4M",
+            capacity=Capacity(
+                fabric_mode=fabric_mode,
+                max_spines=2 if fabric_mode == "l2ls" else 4,
+                max_leaves=8,
+                max_mleafs_per_pair=0,
+                spines=2,
+                leaves=2,
+                **cap_kwargs,
+            ),
+            mlag_pairs=True,
+            spine_mlag=False,
+            member_leaf_pairs=[],
+            member_leaves_per_pair=0,
+            dc_count=2,
+        )
+    )
+
+
+def test_add_site_l3ls_wires_borders_to_bb():
+    text = add_site(_multi("l3ls"), "aus")
+    assert "demo-aus-spine1:" in text
+    assert "demo-aus-border1:" in text
+    endpoints = {frozenset((c.a_node, c.b_node)) for c in parse_connections(text)}
+    assert frozenset(("demo-aus-border1", "demo-bb1")) in endpoints
+    # Existing A/B bb ports stay put (append-only index 2 → ports 5-6).
+    assert ("demo-A-border1", 7, "demo-bb1", 1) in {
+        (c.a_node, c.a_port, c.b_node, c.b_port) for c in parse_connections(text)
+    }
+    assert ("demo-aus-border1", 7, "demo-bb1", 5) in {
+        (c.a_node, c.a_port, c.b_node, c.b_port) for c in parse_connections(text)
+    }
+
+
+def test_add_site_l2_wires_spines_to_bb():
+    text = add_site(_multi("l2ls"), "ord")
+    assert "-border" not in text or "demo-ord-border" not in text
+    endpoints = {frozenset((c.a_node, c.b_node)) for c in parse_connections(text)}
+    assert frozenset(("demo-ord-spine1", "demo-bb1")) in endpoints
+
+
+def test_add_site_rejects_duplicate_and_over_max():
+    text = _multi("l3ls")
+    with pytest.raises(ValueError, match="already exists"):
+        add_site(text, "A")
+    # mlag-peer + border_count=2 fits 7 sites on Ethernet16; start with A/B.
+    grown = text
+    for index in range(5):
+        grown = add_site(grown, f"s{index}")
+    with pytest.raises(ValueError, match="maximum of|exhausted"):
+        add_site(grown, "overflow")
+
+
+def test_add_site_evpn_aa_allows_eight_sites():
+    text = _multi(
+        "l3ls",
+        bb_redundancy="evpn-aa",
+        border_redundancy="evpn-aa",
+    )
+    # Strip peer link expectation: create still emits peer for letter multi-DC;
+    # capacity header carries evpn-aa for port budget (8 sites).
+    grown = text
+    for index in range(MAX_SITES - 2):
+        grown = add_site(grown, f"s{index}")
+    assert f"demo-s{MAX_SITES - 3}-spine1:" in grown
+    with pytest.raises(ValueError, match="maximum of"):
+        add_site(grown, "overflow")
+
+
+def test_add_site_rejects_single_site_without_promote():
+    with pytest.raises(ValueError, match="not multi-DC"):
+        add_site(_single("l3ls"), "aus")
