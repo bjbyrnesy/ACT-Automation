@@ -1,4 +1,7 @@
+import shutil
 from pathlib import Path
+
+import pytest
 
 from acta.attach import attach_host_act
 from acta.capacity import Capacity
@@ -76,6 +79,7 @@ def test_multi_dc_dot_uses_site_clusters_and_backbone():
     assert "A_border1 -> bb1" in dot or "A_border1 -> bb2" in dot
 
 
+@pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz dot not installed")
 def test_write_png_renders_with_graphviz(tmp_path: Path):
     png = tmp_path / "topo.png"
     assert write_png(topology_to_dot(_single()), png) is True

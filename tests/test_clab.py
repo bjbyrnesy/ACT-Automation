@@ -1064,7 +1064,15 @@ links:
             self.assertIn("podman machine ssh", clab.DEPLOY_SCRIPT)
 
     def test_finds_lab_in_docker_when_podman_is_empty(self):
-        lab = {"name": "demo", "topology": {"nodes": {"a": {}, "b": {}}}}
+        lab = {
+            "name": "demo",
+            "topology": {
+                "nodes": {
+                    "a": {"kind": "arista_ceos"},
+                    "b": {"kind": "arista_ceos"},
+                }
+            },
+        }
 
         def run(host, script, argv, data):
             output = "clab-demo-a\nclab-demo-b\n" if argv == ["docker"] else ""
@@ -1074,7 +1082,10 @@ links:
             self.assertEqual(clab.check_onboarding_host("labhost", lab), "docker")
 
     def test_finds_lab_in_rootful_podman(self):
-        lab = {"name": "demo", "topology": {"nodes": {"a": {}}}}
+        lab = {
+            "name": "demo",
+            "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+        }
 
         def run(host, script, argv, data):
             output = "clab-demo-a\n" if argv == ["sudo-podman"] else ""
@@ -1097,7 +1108,10 @@ links:
                     )
                 )
                 fake.chmod(0o755)
-            lab = {"name": "demo", "topology": {"nodes": {"a": {}}}}
+            lab = {
+                "name": "demo",
+                "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+            }
             with mock.patch.dict(
                 os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}
             ):
