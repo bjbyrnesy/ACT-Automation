@@ -33,6 +33,7 @@ CONFIG_KEYS = (
     "CLAB_NTP",
     "CLAB_DISABLEAAA",
     "CLAB_FROM_ACT",
+    "CREATE_FOR",
     "FABRIC_MODE",
     "MAX_SPINES",
     "MAX_LEAVES",

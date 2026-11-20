@@ -516,13 +516,28 @@ def _prompt_fabric_mode(default: str) -> str:
             print(f"  {error}.", file=sys.stderr)
 
 
-def run_create(project_dir: Path) -> Path:
+def _resolve_create_for(requested: str | None, config: dict[str, str]) -> str:
+    """Return ``act``, ``clab``, or ``both`` for create output selection."""
+    value = (requested or config.get("CREATE_FOR") or "act").strip().casefold()
+    if value not in {"act", "clab", "both"}:
+        raise ValueError("CREATE_FOR / --for must be act, clab, or both")
+    return value
+
+
+def run_create(
+    project_dir: Path,
+    *,
+    create_for: str | None = None,
+    clab_name: str | None = None,
+    clab_image: str | None = None,
+) -> Path:
     """Interactively collect a fabric spec (1–4 sites) and write its topology."""
     if not sys.stdin.isatty():
         raise RuntimeError("create requires an interactive terminal")
 
     config_path = project_dir / ".config"
     config = load_config(config_path)
+    output_for = _resolve_create_for(create_for, config)
 
     print("Topology parameters:")
     serial_prefix = prompt_value("Serial prefix")
@@ -679,6 +694,22 @@ def run_create(project_dir: Path) -> Path:
     diagram_path = output_path.with_suffix(".png")
     diagram_written = write_png(topology_to_dot(topology), diagram_path)
 
+    clab_path: Path | None = None
+    if output_for in {"clab", "both"}:
+        from acta.clab.support import argparse_namespace, materialize_clab_from_act
+
+        if clab_name:
+            config["CLAB_NAME"] = clab_name
+        if clab_image:
+            config["CLAB_IMAGE"] = clab_image
+        clab_args = argparse_namespace(
+            config=config,
+            name=clab_name or config.get("CLAB_NAME") or None,
+            image=clab_image or None,
+            mgmt_network=config.get("CLAB_MGMT_NETWORK") or None,
+        )
+        clab_path = materialize_clab_from_act(output_path, clab_args)
+
     config.update(
         {
             "DC_COUNT": str(dc_count),
@@ -694,18 +725,20 @@ def run_create(project_dir: Path) -> Path:
             "MAX_SPINES": str(max_spines),
             "MAX_LEAVES": str(max_leaves),
             "MAX_MLEAFS_PER_PAIR": str(max_mleafs_per_pair),
+            "CREATE_FOR": output_for,
         }
     )
     save_config(config_path, config)
     print(f"Wrote {output_path.name}")
     if diagram_written:
         print(f"Wrote {diagram_path.name}")
-    name = output_path.name
+    if clab_path is not None:
+        print(f"Wrote {clab_path.name}")
+    act_name = output_path.name
     print("Next:")
-    print(f"  ACT:          acta.py upload {name}")
-    print(
-        f"  containerlab: acta.py clab deploy {name} --from-act "
-        "(or set CLAB_FROM_ACT=y in .config)"
-    )
-    print(f"  grow later:   acta.py extend {name} --add leaf")
+    if output_for in {"act", "both"}:
+        print(f"  ACT:          acta.py upload {act_name}")
+    if output_for in {"clab", "both"} and clab_path is not None:
+        print(f"  containerlab: acta.py clab deploy {clab_path.name}")
+    print(f"  grow later:   acta.py extend {act_name} --add leaf")
     return output_path

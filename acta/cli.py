@@ -35,12 +35,30 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser(
+    create = sub.add_parser(
         "create",
         help=(
-            "Interactive ACT topology create (pinned serials/MACs, "
+            "Interactive topology create (pinned serials/MACs, "
             "spare spine/leaf/mleaf capacity)"
         ),
+    )
+    create.add_argument(
+        "--for",
+        dest="create_for",
+        choices=("act", "clab", "both"),
+        default=None,
+        help=(
+            "What to emit: ACT YAML, containerlab lab, or both "
+            "(default: CREATE_FOR from .config, else act)"
+        ),
+    )
+    create.add_argument(
+        "--name",
+        help="containerlab lab name when --for clab/both (default: CLAB_NAME)",
+    )
+    create.add_argument(
+        "--image",
+        help="cEOS image when --for clab/both (default: CLAB_IMAGE / EOS_VERSION)",
     )
     extend = sub.add_parser(
         "extend",
@@ -399,7 +417,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(raw)
     try:
         if args.command == "create":
-            run_create(Path.cwd())
+            run_create(
+                Path.cwd(),
+                create_for=args.create_for,
+                clab_name=args.name,
+                clab_image=args.image,
+            )
             return 0
         if args.command == "extend":
             return _run_extend(args)

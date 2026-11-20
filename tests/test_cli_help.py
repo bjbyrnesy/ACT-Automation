@@ -18,6 +18,18 @@ def test_acta_help_lists_core_commands():
         assert name in out
 
 
+def test_create_help_mentions_for_target():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "create", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "--for" in proc.stdout
+    assert "clab" in proc.stdout
+
+
 def test_upload_help_mentions_topology():
     proc = subprocess.run(
         [sys.executable, str(ROOT / "acta.py"), "upload", "--help"],
