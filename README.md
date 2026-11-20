@@ -253,8 +253,11 @@ python acta.py attach host jump3 topology-….yml --mleaf 1
 ```
 
 - ACT → `node_type: generic` (default ubuntu / `ansible`/`ansible`).
-- Sibling `*.clab.yml` (when present) → `kind: linux` multitool, same hostname,
+- Sibling `*.clab.yml` (when present) → `kind: linux` multitool image with
+  **mcast-tools** preinstalled (`mcast-send` / `mcast-receive` / `mcast-status`),
   `lldpd` on, static `mgmt-ipv4`, no `cmd:` override (keeps dropbear SSH alive).
+  Build once on the clab host: `scripts/build-host-image.sh` (default
+  `CLAB_HOST_IMAGE=localhost/acta-host-multitool:v0.10.0-mcast0.2.3`).
 - Dual-homed / MLAG without `--et` picks one Ethernet free on **both** peers.
 - Use case policy: datacenter → no spines; campus → spines allowed (warning).
 

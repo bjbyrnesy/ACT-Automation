@@ -488,7 +488,11 @@ while IFS= read -r source; do
 done < <(find "$tmp/configs" -type f -print)
 """
 
-DEFAULT_HOST_IMAGE = "ghcr.io/srl-labs/network-multitool:v0.10.0"
+# multitool + mcast-tools (mcast-send/receive/status). Build on the clab host:
+#   scripts/build-host-image.sh
+DEFAULT_HOST_IMAGE = "localhost/acta-host-multitool:v0.10.0-mcast0.2.3"
+# Upstream base without mcast-tools (override via CLAB_HOST_IMAGE if needed).
+UPSTREAM_HOST_IMAGE = "ghcr.io/srl-labs/network-multitool:v0.10.0"
 # multitool ships lldpd; start it after boot so adjacent switches see LLDP.
 HOST_LLDP_EXEC = ("lldpd",)
 

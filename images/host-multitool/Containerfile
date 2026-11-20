@@ -1,0 +1,20 @@
+# Linux jumphost for ACT/clab labs: srl-labs network-multitool plus mcast-tools.
+# Build on the clab host (trogdor):
+#   podman build -t localhost/acta-host-multitool:v0.10.0-mcast0.2.3 \
+#     -f images/host-multitool/Containerfile images/host-multitool
+ARG MULTITOOL_IMAGE=ghcr.io/srl-labs/network-multitool:v0.10.0
+FROM ${MULTITOOL_IMAGE}
+
+# Redeclare after FROM so the version is available to RUN.
+ARG MCAST_TOOLS_VERSION=0.2.3
+
+# Install multicast lab CLIs (mcast-send / mcast-receive / mcast-status), then
+# drop pip so the runtime image stays lean. Tools remain on PATH via site-packages.
+RUN apk add --no-cache py3-pip \
+ && python3 -m pip install --no-cache-dir --break-system-packages \
+      "mcast-tools==${MCAST_TOOLS_VERSION}" \
+ && command -v mcast-send \
+ && command -v mcast-receive \
+ && command -v mcast-status \
+ && apk del py3-pip \
+ && rm -rf /root/.cache

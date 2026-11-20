@@ -1365,8 +1365,10 @@ links:
             self.assertEqual(topology.stat().st_mode & 0o777, 0o600)
 
     def test_linux_jumphost_node_starts_lldpd(self):
-        node = clab.linux_jumphost_node("ghcr.io/srl-labs/network-multitool:v0.10.0")
+        node = clab.linux_jumphost_node()
         self.assertEqual(node["kind"], "linux")
+        self.assertEqual(node["image"], clab.DEFAULT_HOST_IMAGE)
+        self.assertIn("mcast", node["image"])
         self.assertEqual(node["exec"], ["lldpd"])
         # Must not override CMD — multitool entrypoint needs nginx (or sleep)
         # to keep dropbear SSH alive.
