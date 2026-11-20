@@ -92,8 +92,32 @@ def test_clab_help_lists_subcommands():
     )
     assert proc.returncode == 0
     out = proc.stdout
-    for name in ("generate", "deploy", "destroy", "redeploy", "onboard"):
+    for name in ("create", "generate", "deploy", "destroy", "redeploy", "onboard"):
         assert name in out
+
+
+def test_clab_create_help_defaults_to_clab():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "clab", "create", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "--for" in proc.stdout
+    assert "clab" in proc.stdout
+    assert "ACT_TOPOLOGY" not in proc.stdout
+
+
+def test_clab_generate_help_names_act_topology():
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "acta.py"), "clab", "generate", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    assert "ACT_TOPOLOGY" in proc.stdout
 
 
 def test_save_config_writes_act_create_and_clab_keys(tmp_path: Path):

@@ -156,9 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     clab = sub.add_parser(
         "clab",
-        help="Containerlab: generate, deploy, onboard cEOS labs",
+        help="Containerlab: create, generate, deploy, onboard cEOS labs",
     )
     clab_sub = clab.add_subparsers(dest="clab_command", required=True)
+    clab_sub.add_parser(
+        "create",
+        help="Interactive fabric create for containerlab (default --for clab)",
+    )
     clab_sub.add_parser("generate", help="Convert ACT topology YAML to containerlab")
     clab_sub.add_parser("deploy", help="Deploy a .clab.yml locally or via --host")
     clab_sub.add_parser("onboard", help="Onboard cEOS containers to CVaaS")

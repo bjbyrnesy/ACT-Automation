@@ -11,21 +11,73 @@ from .onboard import onboard
 from .support import config_flag, config_image, config_ip_list, read_config
 
 
+def _run_clab_create(args):
+    """Interactive fabric create with containerlab as the default output."""
+    from pathlib import Path
+
+    from acta.create import run_create
+
+    create_for = getattr(args, "create_for", None) or "clab"
+    run_create(
+        Path.cwd(),
+        create_for=create_for,
+        clab_name=getattr(args, "name", None),
+        clab_image=getattr(args, "image", None),
+    )
+    return 0
+
+
 def main(argv=None):
     config = read_config()
     parser = argparse.ArgumentParser(
         prog="acta.py clab",
         description=(
-            "Generate, deploy, destroy, redeploy, and onboard containerlab labs "
-            "derived from ACT topologies."
+            "Create, generate, deploy, destroy, redeploy, show, and onboard "
+            "containerlab labs. Create is interactive (same fabric engine as "
+            "act create); generate converts an existing ACT topology YAML."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    create = sub.add_parser(
+        "create",
+        help=(
+            "Interactive fabric create for containerlab "
+            "(default --for clab; use --for both to also keep ACT YAML prominent)"
+        ),
+    )
+    create.add_argument(
+        "--for",
+        dest="create_for",
+        choices=("clab", "both"),
+        default=None,
+        help=(
+            "What to emphasize: containerlab lab, or both ACT + clab "
+            "(default: clab; ACT YAML is still written as the fabric source "
+            "for extend/generate)"
+        ),
+    )
+    create.add_argument(
+        "--name",
+        default=config.get("CLAB_NAME") or None,
+        help="containerlab lab name (default: CLAB_NAME / hostname prefix)",
+    )
+    create.add_argument(
+        "--image",
+        default=config_image(config),
+        help="cEOS image (default: CLAB_IMAGE / EOS_VERSION)",
+    )
+    create.set_defaults(func=_run_clab_create)
+
     gen = sub.add_parser(
         "generate",
-        help="Convert an acta.py act create ACT topology to containerlab YAML",
+        help="Convert an ACT topology YAML to containerlab YAML",
     )
-    gen.add_argument("source")
+    gen.add_argument(
+        "source",
+        metavar="ACT_TOPOLOGY",
+        help="ACT topology YAML from acta act create / acta clab create",
+    )
     gen.add_argument(
         "--name",
         default=None,
@@ -271,7 +323,7 @@ def main(argv=None):
         result = args.func(args)
         if isinstance(result, int):
             return result
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0
