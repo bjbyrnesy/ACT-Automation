@@ -48,6 +48,7 @@ def test_run_create_clamps_cached_member_leaf_default(
         [
             "demo",
             "",
+            "",  # sites (default 1)
             "",
             "",
             "",
@@ -71,9 +72,53 @@ def test_run_create_clamps_cached_member_leaf_default(
 
     assert "demo-mleaf1:" in output_path.read_text(encoding="utf-8")
     assert create.load_config(tmp_path / ".config")["MEMBER_LEAVES_PER_PAIR"] == "1"
+    assert create.load_config(tmp_path / ".config")["DC_COUNT"] == "1"
     out = capsys.readouterr().out
     assert "acta.py upload" in out
     assert f"acta.py extend {output_path.name} --add leaf" in out
+
+
+def test_run_create_asks_sites_and_fabric_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    labels: list[str] = []
+    responses = iter(
+        [
+            "demo",
+            "",
+            "2",  # sites
+            "l3ls",
+            "",  # spines per site
+            "",  # leaves per site
+            "",  # max spines
+            "",  # max leaves
+            "0",  # max mleafs
+            "n",  # leaf mlag
+            "",  # spine mlag (spines==2)
+            "",  # eos
+        ]
+    )
+
+    def prompt_value(label: str, default: str | None = None) -> str:
+        labels.append(label)
+        return next(responses) or default or ""
+
+    monkeypatch.setattr(create.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(create, "prompt_value", prompt_value)
+
+    output_path = create.run_create(tmp_path)
+    text = output_path.read_text(encoding="utf-8")
+
+    assert any(label.startswith("Number of sites") for label in labels)
+    assert any(label.startswith("Fabric mode") for label in labels)
+    assert any(label == "Spines per site" for label in labels)
+    assert "demo-A-border1:" in text
+    assert "demo-bb1:" in text
+    assert "fabric_mode=l3ls" in text
+    cached = create.load_config(tmp_path / ".config")
+    assert cached["DC_COUNT"] == "2"
+    assert cached["FABRIC_MODE"] == "l3ls"
 
 
 def test_emit_includes_capacity_and_mesh_without_spare_links():

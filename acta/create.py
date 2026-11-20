@@ -494,8 +494,30 @@ def _configured_int(config: dict[str, str], key: str, default: int) -> int:
         return default
 
 
+def _normalize_fabric_mode(value: str) -> str:
+    """Map generate.sh fabric-mode aliases to ``l3ls`` or ``l2``."""
+    folded = value.strip().casefold()
+    if folded in {"l3ls", "l3"}:
+        return "l3ls"
+    if folded in {"l2", "campus"}:
+        return "l2"
+    raise ValueError("fabric mode must be l3ls or l2")
+
+
+def _prompt_fabric_mode(default: str) -> str:
+    while True:
+        answer = prompt_value(
+            "Fabric mode (l3ls=border leaves, l2=spine uplinks)",
+            default,
+        )
+        try:
+            return _normalize_fabric_mode(answer)
+        except ValueError as error:
+            print(f"  {error}.", file=sys.stderr)
+
+
 def run_create(project_dir: Path) -> Path:
-    """Interactively collect a single-DC fabric spec and write its topology."""
+    """Interactively collect a fabric spec (1–4 sites) and write its topology."""
     if not sys.stdin.isatty():
         raise RuntimeError("create requires an interactive terminal")
 
@@ -512,33 +534,70 @@ def run_create(project_dir: Path) -> Path:
             "hostname prefix must be alphanumeric with optional internal dashes"
         )
 
+    dc_count = _prompt_int(
+        f"Number of sites (1-{MAX_DC})",
+        _configured_int(config, "DC_COUNT", 1),
+        minimum=1,
+        maximum=MAX_DC,
+    )
+    multi_dc = dc_count > 1
+    fabric_mode: str | None = None
+    if multi_dc:
+        cached_mode = config.get("FABRIC_MODE") or "l3ls"
+        try:
+            cached_mode = _normalize_fabric_mode(cached_mode)
+        except ValueError:
+            cached_mode = "l3ls"
+        fabric_mode = _prompt_fabric_mode(cached_mode)
+
+    spine_label = "Spines per site" if multi_dc else "Number of spines"
+    leaf_label = "Leaves per site" if multi_dc else "Number of leaves"
+    spine_ceiling = address_limit("spine", multi_dc)
+    leaf_ceiling = address_limit("leaf", multi_dc)
+    if fabric_mode == "l2":
+        spine_ceiling = min(spine_ceiling, 2)
+
     while True:
         spines = _prompt_int(
-            "Number of spines", _configured_int(config, "SPINE_COUNT", 2)
+            spine_label,
+            _configured_int(config, "SPINE_COUNT", 2),
+            maximum=spine_ceiling,
         )
         leaves = _prompt_int(
-            "Number of leaves", _configured_int(config, "LEAF_COUNT", 4)
+            leaf_label,
+            _configured_int(config, "LEAF_COUNT", 4),
+            maximum=leaf_ceiling,
         )
         try:
             validate_current_capacity(spines, leaves)
+            if fabric_mode == "l2" and spines > 2:
+                raise ValueError("L2 fabric spines hard-capped at 2")
             break
         except ValueError as error:
             print(f"  {error}; choose smaller current counts", file=sys.stderr)
 
     print()
     print(capacity_banner())
+    max_spine_ceiling = min(HARD_PORT_MAX, MAX_ADDRESS_SPINES, spine_ceiling)
+    if fabric_mode == "l2":
+        max_spine_ceiling = min(max_spine_ceiling, 2)
+    max_leaf_ceiling = min(HARD_PORT_MAX, leaf_ceiling)
     while True:
         max_spines = _prompt_int(
-            "Maximum spines",
-            max(spines, _configured_int(config, "MAX_SPINES", 4)),
+            "Maximum spines" + (" per site" if multi_dc else ""),
+            max(
+                spines, _configured_int(config, "MAX_SPINES", min(4, max_spine_ceiling))
+            ),
             minimum=spines,
-            maximum=min(HARD_PORT_MAX, MAX_ADDRESS_SPINES),
+            maximum=max_spine_ceiling,
         )
         max_leaves = _prompt_int(
-            "Maximum leaves",
-            max(leaves, _configured_int(config, "MAX_LEAVES", 8)),
+            "Maximum leaves" + (" per site" if multi_dc else ""),
+            max(
+                leaves, _configured_int(config, "MAX_LEAVES", min(8, max_leaf_ceiling))
+            ),
             minimum=leaves,
-            maximum=HARD_PORT_MAX,
+            maximum=max_leaf_ceiling,
         )
         max_mleafs_per_pair = _prompt_int(
             "Maximum member leaves per leaf pair",
@@ -551,7 +610,7 @@ def run_create(project_dir: Path) -> Path:
             maximum=HARD_PORT_MAX,
         )
         capacity = Capacity(
-            fabric_mode=None,
+            fabric_mode=fabric_mode,
             max_spines=max_spines,
             max_leaves=max_leaves,
             max_mleafs_per_pair=max_mleafs_per_pair,
@@ -610,6 +669,7 @@ def run_create(project_dir: Path) -> Path:
         spine_mlag=spine_mlag,
         member_leaf_pairs=member_leaf_pairs,
         member_leaves_per_pair=member_leaves_per_pair,
+        dc_count=dc_count,
     )
     topology = emit_act_yaml(spec)
     output_path = (
@@ -621,7 +681,7 @@ def run_create(project_dir: Path) -> Path:
 
     config.update(
         {
-            "DC_COUNT": "1",
+            "DC_COUNT": str(dc_count),
             "SPINE_COUNT": str(spines),
             "LEAF_COUNT": str(leaves),
             "MLAG_PAIRS": "y" if mlag_pairs else "n",
@@ -630,7 +690,7 @@ def run_create(project_dir: Path) -> Path:
             "MEMBER_LEAVES_PER_PAIR": (
                 str(member_leaves_per_pair) if member_leaf_pairs else ""
             ),
-            "FABRIC_MODE": "",
+            "FABRIC_MODE": fabric_mode or "",
             "MAX_SPINES": str(max_spines),
             "MAX_LEAVES": str(max_leaves),
             "MAX_MLEAFS_PER_PAIR": str(max_mleafs_per_pair),
