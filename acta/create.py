@@ -183,10 +183,22 @@ def node_block(
     role: str,
     index: int,
     site: str | None = None,
+    site_index: int | None = None,
 ) -> list[str]:
-    """Return the YAML lines for one fabric node (``site`` set for multi-DC)."""
+    """Return the YAML lines for one fabric node (``site`` set for multi-DC).
+
+    Letter sites ``A``–``D`` infer ``site_index`` from ``SITE_LETTERS``. Named
+    sites must pass an explicit 0-based ``site_index`` (sorted ordinal).
+    """
     identity = f"{role}{index}" if site is None else f"{site}-{role}{index}"
-    site_index = None if site is None else SITE_LETTERS.index(site)
+    if site is not None and site_index is None:
+        if len(site) == 1 and site in SITE_LETTERS:
+            site_index = SITE_LETTERS.index(site)
+        else:
+            raise ValueError(
+                f"site_index is required for named site {site!r} "
+                "(letter sites A–D infer index automatically)"
+            )
     address = node_address(role, index, site_index)
     return [
         f"  - {hostname_prefix}-{identity}:",
