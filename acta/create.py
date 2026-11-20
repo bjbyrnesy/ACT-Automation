@@ -87,6 +87,11 @@ def _validate_spec(spec: FabricSpec) -> None:
         )
     if spec.spine_mlag and spec.capacity.spines != 2:
         raise ValueError("spine MLAG requires exactly two spines")
+    if spec.spine_mlag and mode in {"l3ls", "l3"}:
+        raise ValueError(
+            "L3LS fabrics do not use spine MLAG peer links "
+            "(spines stay independent; leaf MLAG is unchanged)"
+        )
     if spec.member_leaf_pairs and not spec.mlag_pairs:
         raise ValueError("member leaves require leaf MLAG")
     if spec.member_leaf_pairs and spec.member_leaves_per_pair < 1:
@@ -793,10 +798,14 @@ def run_create(
         "Pair leaves into MLAG pairs (y/n)",
         config.get("MLAG_PAIRS", "n").casefold() in {"y", "yes"},
     )
-    spine_mlag = spines == 2 and _prompt_yes_no(
-        "Add MLAG peer-links between spines (y/n)",
-        default=True,
-    )
+    # Spine MLAG is an L2LS pattern only. L3LS spines stay independent; asking
+    # here would invite wrong peer links on a routed leaf-spine fabric.
+    spine_mlag = False
+    if fabric_mode in {"l2ls", "l2"} and spines == 2:
+        spine_mlag = _prompt_yes_no(
+            "Add MLAG peer-links between spines (y/n)",
+            default=True,
+        )
 
     member_leaf_pairs: list[int] = []
     member_leaves_per_pair = 0

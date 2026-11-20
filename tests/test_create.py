@@ -50,16 +50,15 @@ def test_run_create_clamps_cached_member_leaf_default(
             "",
             "",  # sites (default 1)
             "",  # use case (default datacenter)
-            "",
-            "",
-            "",
-            "",
-            "1",
-            "y",
-            "",
-            "1",
-            "",
-            "",
+            "",  # spines
+            "",  # leaves
+            "",  # max spines
+            "",  # max leaves
+            "1",  # max mleafs
+            "y",  # leaf mlag (no spine-MLAG prompt for non-l2ls)
+            "1",  # member leaf pairs
+            "",  # member leaves per pair
+            "",  # eos
         ]
     )
     monkeypatch.setattr(create.sys.stdin, "isatty", lambda: True)
@@ -95,8 +94,7 @@ def test_run_create_for_clab_writes_lab(
             "",
             "",
             "0",  # max mleafs
-            "n",
-            "",  # spine mlag
+            "n",  # leaf mlag (single-site: no spine-MLAG prompt)
             "",
         ]
     )
@@ -142,8 +140,7 @@ def test_run_create_asks_sites_and_fabric_mode(
             "",  # bb count → 2
             "",  # border redundancy → mlag-peer
             "",  # border count → 2
-            "n",  # leaf mlag
-            "",  # spine mlag (spines==2)
+            "n",  # leaf mlag (l3ls: no spine-MLAG prompt)
             "",  # eos
         ]
     )
@@ -161,9 +158,13 @@ def test_run_create_asks_sites_and_fabric_mode(
     assert any(label.startswith("Number of sites") for label in labels)
     assert any(label.startswith("Fabric mode") for label in labels)
     assert any(label == "Spines per site" for label in labels)
+    assert not any(
+        "spines" in label.casefold() and "mlag" in label.casefold() for label in labels
+    )
     assert "demo-A-border1:" in text
     assert "demo-bb1:" in text
     assert "fabric_mode=l3ls" in text
+    assert "Spine MLAG peer" not in text
     cached = create.load_config(tmp_path / ".config")
     assert cached["DC_COUNT"] == "2"
     assert cached["FABRIC_MODE"] == "l3ls"
@@ -308,13 +309,13 @@ def test_multi_dc_l3ls_emit_has_border_and_bb():
 
 
 def test_multi_dc_l3ls_ports_follow_reserved_blocks():
-    spec = _multi_dc_spec("l3ls", spine_mlag=True)
-    text = emit_act_yaml(spec)
+    text = emit_act_yaml(_multi_dc_spec("l3ls"))
     links = _endpoints(text)
-    # border <-> spine uses spine ports after max_leaves + spine MLAG block.
+    # border <-> spine uses spine ports after max_leaves + reserved spine MLAG block.
     assert ("demo-B-border1", 2, "demo-B-spine2", 11) in links
     assert ("demo-B-border2", 2, "demo-B-spine2", 12) in links
-    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) in links
+    # L3LS never emits spine peer links.
+    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) not in links
     # border MLAG peer then border <-> bb after max_spines.
     assert ("demo-A-border1", 5, "demo-A-border2", 5) in links
     assert ("demo-A-border1", 7, "demo-bb1", 1) in links
@@ -324,6 +325,11 @@ def test_multi_dc_l3ls_ports_follow_reserved_blocks():
     # leaf mesh and MLAG are unchanged per site.
     assert ("demo-B-spine1", 2, "demo-B-leaf2", 1) in links
     assert ("demo-B-leaf1", 5, "demo-B-leaf2", 5) in links
+
+
+def test_l3ls_rejects_spine_mlag():
+    with pytest.raises(ValueError, match="L3LS.*spine MLAG"):
+        emit_act_yaml(_multi_dc_spec("l3ls", spine_mlag=True))
 
 
 def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
