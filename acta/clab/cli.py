@@ -12,7 +12,11 @@ from .support import config_flag, config_image, config_ip_list, read_config
 def main(argv=None):
     config = read_config()
     parser = argparse.ArgumentParser(
-        description="Generate, deploy and onboard containerlab labs derived from ACT topologies."
+        prog="acta.py clab",
+        description=(
+            "Generate, deploy and onboard containerlab labs derived from ACT "
+            "topologies."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
     gen = sub.add_parser(
