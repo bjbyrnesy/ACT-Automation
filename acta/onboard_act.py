@@ -140,13 +140,14 @@ def run_onboard_act(
     cvaas_token: str,
     cvaas_host: str,
     cvaas_port: str = CVAAS_PORT_DEFAULT,
-    run_ssh: Callable[[str, str], None],
+    run_ssh: Callable[[str, str, str, str], None],
     choose_lab: Callable[[list[dict[str, Any]]], Mapping[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """List Running labs, resolve EOS password, SSH-paste TerminAttr config.
 
-    ``run_ssh(host, commands)`` is injected so unit tests never open real SSH.
-    Returns ``(eos_username, eos_password)`` resolved from the topology.
+    ``run_ssh(host, commands, username, password)`` is injected so unit tests
+    never open real SSH. Returns ``(eos_username, eos_password)`` resolved from
+    the topology.
     """
     running = client.list_running_labs(act_user)
     lab_summary = _pick_lab(running, choose_lab)
@@ -175,5 +176,5 @@ def run_onboard_act(
         cvaas_port=cvaas_port,
     )
     for _hostname, internal_ip in devices:
-        run_ssh(internal_ip, snippet)
+        run_ssh(internal_ip, snippet, username, password)
     return username, password

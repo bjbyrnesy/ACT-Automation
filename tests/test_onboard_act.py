@@ -119,10 +119,10 @@ def test_run_onboard_act_pastes_snippet_via_injected_ssh():
     )
     client.login()
 
-    ssh_calls: list[tuple[str, str]] = []
+    ssh_calls: list[tuple[str, str, str, str]] = []
 
-    def fake_ssh(host: str, commands: str) -> None:
-        ssh_calls.append((host, commands))
+    def fake_ssh(host: str, commands: str, username: str, password: str) -> None:
+        ssh_calls.append((host, commands, username, password))
 
     credentials = run_onboard_act(
         client,
@@ -138,8 +138,8 @@ def test_run_onboard_act_pastes_snippet_via_injected_ssh():
     )
     assert credentials == ("cvpadmin", "secret!")
     assert ssh_calls == [
-        ("10.0.0.1", expected),
-        ("10.0.0.2", expected),
+        ("10.0.0.1", expected, "cvpadmin", "secret!"),
+        ("10.0.0.2", expected, "cvpadmin", "secret!"),
     ]
 
 
@@ -167,7 +167,7 @@ def test_run_onboard_act_raises_when_no_running_labs():
             act_user="alice",
             cvaas_token="tok",
             cvaas_host="apiserver.arista.io",
-            run_ssh=lambda host, commands: None,
+            run_ssh=lambda host, commands, username, password: None,
         )
 
 
@@ -212,15 +212,17 @@ def test_run_onboard_act_prompts_when_multiple_running_labs():
     )
     client.login()
 
-    ssh_calls: list[tuple[str, str]] = []
+    ssh_calls: list[tuple[str, str, str, str]] = []
 
     run_onboard_act(
         client,
         act_user="alice",
         cvaas_token="tok",
         cvaas_host="apiserver.arista.io",
-        run_ssh=lambda host, commands: ssh_calls.append((host, commands)),
+        run_ssh=lambda host, commands, username, password: ssh_calls.append(
+            (host, commands, username, password)
+        ),
         choose_lab=lambda running: running[1],
     )
 
-    assert [host for host, _ in ssh_calls] == ["10.0.0.9"]
+    assert [host for host, *_ in ssh_calls] == ["10.0.0.9"]

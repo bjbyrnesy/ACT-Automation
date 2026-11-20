@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import Any
 
+from acta.act_api import ActClient
+from acta.clab.support import validate_enrollment_token
+from acta.config import load_config, save_config
 from acta.create import run_create
 from acta.extend import ExtendResult, extend_topology, topology_sites
+from acta.onboard_act import CVAAS_PORT_DEFAULT, run_onboard_act
 from acta.prompt import prompt_value
+from acta.upload import DEFAULT_ACT_TENANT, run_upload
 
 _ADD_CHOICES = ("spine", "leaf", "pair", "mleaf")
+_CVAAS_HOST_PROD = "apiserver.arista.io"
+_CVAAS_HOST_STAGING = "apiserver.cv-staging.corp.arista.io"
+_PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,13 +92,38 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Write a new dated topology file beside the input",
     )
-    sub.add_parser(
+    upload = sub.add_parser(
         "upload",
         help="Upload topology YAML to ACT; optional lab create/deploy",
+    )
+    upload.add_argument(
+        "topology",
+        type=Path,
+        help="ACT topology YAML to upload",
+    )
+    deploy = upload.add_mutually_exclusive_group()
+    deploy.add_argument(
+        "--deploy",
+        action="store_true",
+        default=None,
+        help="Create and deploy a lab after upload (skip prompt)",
+    )
+    deploy.add_argument(
+        "--no-deploy",
+        action="store_true",
+        help="Upload only; do not create/deploy a lab (skip prompt)",
+    )
+    upload.add_argument(
+        "--tenant",
+        help="ACT tenant (default: ACT_TENANT / prompt)",
     )
     sub.add_parser(
         "onboard",
         help="Onboard a Running ACT lab to CVaaS (TerminAttr over SSH)",
+        description=(
+            "List Running ACT labs, pick one, and paste TerminAttr "
+            "onboarding over SSH to vEOS devices for CVaaS."
+        ),
     )
     clab = sub.add_parser(
         "clab",
@@ -157,27 +196,226 @@ def _run_extend(args: argparse.Namespace) -> int:
     return 0
 
 
+def _deploy_flag(args: argparse.Namespace) -> bool | None:
+    if args.deploy:
+        return True
+    if args.no_deploy:
+        return False
+    return None
+
+
+def _run_upload(args: argparse.Namespace) -> int:
+    run_upload(
+        args.topology,
+        deploy=_deploy_flag(args),
+        tenant=args.tenant,
+        project_dir=_PROJECT_DIR,
+    )
+    return 0
+
+
+def _prompt_cvaas_host(cached: str) -> str:
+    host = cached.strip()
+    if host:
+        print(f"CVaaS environment: {host} (cached)")
+        change = prompt_value("Change it? [y/N]", default="n").strip().casefold()
+        if change not in {"y", "yes"}:
+            return host
+        host = ""
+    print("CVaaS environment:")
+    print(f"  1) Production  ({_CVAAS_HOST_PROD})")
+    print(f"  2) Staging     ({_CVAAS_HOST_STAGING})")
+    print("  3) Custom URL")
+    while True:
+        choice = prompt_value("Select CVaaS environment [1-3]").strip()
+        if choice == "1":
+            return _CVAAS_HOST_PROD
+        if choice == "2":
+            return _CVAAS_HOST_STAGING
+        if choice == "3":
+            custom = prompt_value("Enter CVaaS host").strip()
+            if custom:
+                return custom
+            print("  Host cannot be blank.", file=sys.stderr)
+            continue
+        print("  Invalid choice.", file=sys.stderr)
+
+
+def _choose_lab(labs: list[dict[str, Any]]) -> dict[str, Any]:
+    print("Running labs:")
+    for index, lab in enumerate(labs, start=1):
+        name = lab.get("name") or lab.get("id")
+        print(f"  {index}) {name} ({lab.get('id')})")
+    while True:
+        answer = prompt_value("Select lab number").strip()
+        if answer.isdecimal():
+            index = int(answer)
+            if 1 <= index <= len(labs):
+                return labs[index - 1]
+        print(f"  Enter a number from 1 to {len(labs)}.", file=sys.stderr)
+
+
+def _run_ssh_eos(host: str, commands: str, username: str, password: str) -> None:
+    """Paste EOS CLI commands over SSH (``onboard.sh`` ``ssh_eos`` parity)."""
+    ssh = [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "LogLevel=ERROR",
+        "-o",
+        "ConnectTimeout=10",
+        f"{username}@{host}",
+    ]
+    if shutil.which("sshpass"):
+        completed = subprocess.run(
+            ["sshpass", "-p", password, *ssh],
+            input=commands,
+            text=True,
+            check=False,
+            capture_output=True,
+        )
+    else:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            prefix="acta-askpass-",
+            delete=False,
+            encoding="utf-8",
+        ) as handle:
+            handle.write("#!/bin/sh\n")
+            handle.write(f"printf '%s\\n' {shlex.quote(password)}\n")
+            askpass = Path(handle.name)
+        try:
+            askpass.chmod(0o700)
+            env = os.environ.copy()
+            env["SSH_ASKPASS"] = str(askpass)
+            env["SSH_ASKPASS_REQUIRE"] = "force"
+            env.setdefault("DISPLAY", "dummy:0")
+            completed = subprocess.run(
+                ssh,
+                input=commands,
+                text=True,
+                check=False,
+                capture_output=True,
+                env=env,
+            )
+        finally:
+            askpass.unlink(missing_ok=True)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            f"SSH onboard to {host} failed"
+            + (f": {detail}" if detail else f" (exit {completed.returncode})")
+        )
+
+
+def _run_onboard() -> int:
+    config_path = _PROJECT_DIR / ".config"
+    config = load_config(config_path)
+
+    print("ACT API access:")
+    act_tenant = prompt_value(
+        "ACT tenant",
+        os.environ.get("ACT_TENANT") or config.get("ACT_TENANT") or DEFAULT_ACT_TENANT,
+    )
+    act_user = prompt_value(
+        "ACT username (e.g. firstname.lastname)",
+        os.environ.get("ACT_USER") or config.get("ACT_USER") or "",
+    )
+    api_key = os.environ.get("ACT_API_KEY") or config.get("ACT_API_KEY")
+    if not api_key:
+        api_key = prompt_value("ACT API key", secret=True)
+
+    print("\nCVaaS onboarding:")
+    cvaas_host = _prompt_cvaas_host(
+        os.environ.get("CVAAS_HOST") or config.get("CVAAS_HOST") or ""
+    )
+    print(f"Using CVaaS host: {cvaas_host}")
+    cvaas_token = os.environ.get("CVAAS_TOKEN") or config.get("CVAAS_TOKEN") or ""
+    if cvaas_token:
+        try:
+            validate_enrollment_token(cvaas_token)
+        except ValueError:
+            print(
+                "Cached CVaaS enrollment token is expired or invalid; "
+                "enter a new token."
+            )
+            cvaas_token = ""
+    if not cvaas_token:
+        cvaas_token = prompt_value("CVaaS enrollment token", secret=True)
+    validate_enrollment_token(cvaas_token)
+    cvaas_user = prompt_value(
+        "Your CVaaS username",
+        os.environ.get("CVAAS_USER") or config.get("CVAAS_USER") or "",
+    )
+    for label, value in (
+        ("ACT_TENANT", act_tenant),
+        ("ACT_USER", act_user),
+        ("ACT_API_KEY", api_key),
+        ("CVAAS_TOKEN", cvaas_token),
+        ("CVAAS_USER", cvaas_user),
+    ):
+        if not value:
+            raise ValueError(f"{label} is required and cannot be blank")
+
+    config.update(
+        {
+            "ACT_TENANT": act_tenant,
+            "ACT_USER": act_user,
+            "ACT_API_KEY": api_key,
+            "CVAAS_HOST": cvaas_host,
+            "CVAAS_TOKEN": cvaas_token,
+            "CVAAS_USER": cvaas_user,
+        }
+    )
+    save_config(config_path, config)
+
+    client = ActClient(f"https://{act_tenant}.act.arista.com/rest/v1", api_key)
+    print(f"\nLogging into ACT ({act_tenant})...")
+    client.login()
+    run_onboard_act(
+        client,
+        act_user=act_user,
+        cvaas_token=cvaas_token,
+        cvaas_host=cvaas_host,
+        cvaas_port=CVAAS_PORT_DEFAULT,
+        run_ssh=_run_ssh_eos,
+        choose_lab=_choose_lab,
+    )
+    print("Done. TerminAttr onboarding commands pasted to Running lab devices.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "clab":
+        from acta.clab.cli import main as clab_main
+
+        return int(clab_main(raw[1:]) or 0)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command == "create":
-        try:
+    args = parser.parse_args(raw)
+    try:
+        if args.command == "create":
             run_create(Path.cwd())
-        except (EOFError, RuntimeError, ValueError) as error:
-            print(f"ERROR: {error}", file=sys.stderr, flush=True)
-            return 2
-        return 0
-    if args.command == "extend":
-        try:
+            return 0
+        if args.command == "extend":
             return _run_extend(args)
-        except (
-            EOFError,
-            NotImplementedError,
-            OSError,
-            RuntimeError,
-            ValueError,
-        ) as error:
-            print(f"ERROR: {error}", file=sys.stderr, flush=True)
-            return 2
+        if args.command == "upload":
+            return _run_upload(args)
+        if args.command == "onboard":
+            return _run_onboard()
+    except (
+        EOFError,
+        FileNotFoundError,
+        NotImplementedError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as error:
+        print(f"ERROR: {error}", file=sys.stderr, flush=True)
+        return 2
     print(f"ERROR: command {args.command!r} not implemented yet", flush=True)
     return 2
