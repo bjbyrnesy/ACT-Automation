@@ -99,8 +99,8 @@ def main(argv=None):
         action.add_argument(
             "--runtime",
             choices=("docker", "podman"),
-            default="docker" if command == "deploy" else None,
-            help="Container runtime (deploy defaults to docker; onboarding auto-detects)",
+            default="podman" if command == "deploy" else None,
+            help="Container runtime (deploy defaults to podman; onboarding auto-detects)",
         )
         action.add_argument(
             "--from-act",

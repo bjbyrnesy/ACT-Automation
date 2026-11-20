@@ -935,6 +935,7 @@ links:
                 clab.deploy(args)
             self.assertEqual(run.call_args.args[2], ["demo", "podman"])
             self.assertIn('--runtime "$runtime"', clab.DEPLOY_SCRIPT)
+            self.assertIn("podman machine ssh", clab.DEPLOY_SCRIPT)
 
     def test_finds_lab_in_docker_when_podman_is_empty(self):
         lab = {"name": "demo", "topology": {"nodes": {"a": {}, "b": {}}}}
@@ -1073,9 +1074,14 @@ links:
     def test_local_deployment_stores_topology_on_host(self):
         with tempfile.TemporaryDirectory() as d:
             directory = Path(d)
-            fake = directory / "sudo"
-            fake.write_text('#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/invocation"\n')
-            fake.chmod(0o755)
+            fake_sudo = directory / "sudo"
+            fake_sudo.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" > "$HOME/invocation"\n'
+            )
+            fake_sudo.chmod(0o755)
+            fake_clab = directory / "containerlab"
+            fake_clab.write_text("#!/bin/sh\nexit 0\n")
+            fake_clab.chmod(0o755)
             with mock.patch.dict(
                 os.environ, {"HOME": d, "PATH": d + os.pathsep + os.environ["PATH"]}
             ):
@@ -1091,9 +1097,12 @@ links:
 
     def test_deployment_does_not_force_private_umask_on_containerlab(self):
         with tempfile.TemporaryDirectory() as d:
-            fake = Path(d) / "sudo"
-            fake.write_text('#!/bin/sh\numask > "$HOME/containerlab-umask"\n')
-            fake.chmod(0o755)
+            fake_sudo = Path(d) / "sudo"
+            fake_sudo.write_text('#!/bin/sh\numask > "$HOME/containerlab-umask"\n')
+            fake_sudo.chmod(0o755)
+            fake_clab = Path(d) / "containerlab"
+            fake_clab.write_text("#!/bin/sh\nexit 0\n")
+            fake_clab.chmod(0o755)
             previous = os.umask(0o022)
             try:
                 with mock.patch.dict(

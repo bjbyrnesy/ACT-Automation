@@ -393,14 +393,26 @@ fi
 
 DEPLOY_SCRIPT = r"""set -eu
 name=$1
-runtime=${2:-docker}
+runtime=${2:-podman}
 dir="$HOME/.act-automation/clab/$name"
 mkdir -p "$dir"
 (umask 077; cat > "$dir/topology.clab.yml")
-if [ "$(id -u)" -eq 0 ]; then
-  containerlab deploy -t "$dir/topology.clab.yml" --runtime "$runtime"
+topo="$dir/topology.clab.yml"
+if command -v containerlab >/dev/null 2>&1; then
+  if [ "$(id -u)" -eq 0 ]; then
+    containerlab deploy -t "$topo" --runtime "$runtime"
+  else
+    sudo -n containerlab deploy -t "$topo" --runtime "$runtime"
+  fi
+elif command -v podman >/dev/null 2>&1 \
+  && podman machine ssh -- command -v containerlab >/dev/null 2>&1; then
+  # macOS: no darwin containerlab binary; run inside the Podman VM.
+  # The Mac home directory is bind-mounted, so $topo is visible there.
+  podman machine ssh -- sudo containerlab deploy -t "$topo" --runtime "$runtime"
 else
-  sudo -n containerlab deploy -t "$dir/topology.clab.yml" --runtime "$runtime"
+  echo "containerlab not found on PATH or in the Podman machine." >&2
+  echo "Install it on Linux, or ensure 'podman machine ssh' can reach containerlab." >&2
+  exit 1
 fi
 """
 # Keep the container runtime and privilege context consistent from discovery

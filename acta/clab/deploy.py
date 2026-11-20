@@ -46,7 +46,7 @@ def deploy(args):
     result = host_run(
         args.host,
         DEPLOY_SCRIPT,
-        [lab["name"], getattr(args, "runtime", None) or "docker"],
+        [lab["name"], getattr(args, "runtime", None) or "podman"],
         content,
     )
     if result.stdout:
