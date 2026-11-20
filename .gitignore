@@ -1,5 +1,18 @@
-# Cached config (contains your CVaaS enrollment token)
+# Cached config (contains your CVaaS enrollment token / ACT API key)
 .config
+.env
+.env.*
+!.env.example
+
+# Common credential / key material
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
 
 # macOS noise
 .DS_Store
@@ -7,10 +20,14 @@
 # VSCode Workspace
 ACT Automation.code-workspace
 
-# Any topology files
+# Generated topology artifacts (keep GitHub Actions workflows trackable)
 topology*
 !acta/topology*.py
 *.yml
+!.github/
+!.github/**/*.yml
+*.yaml
+!.github/**/*.yaml
 *.annotations.json
 *.eos
 

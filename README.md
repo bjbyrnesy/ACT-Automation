@@ -30,6 +30,16 @@ uv sync --extra dev
 
 Optional: Graphviz `dot` — if installed, `create` and `extend` also write or refresh a PNG beside the topology YAML.
 
+### CI & security
+
+GitHub Actions on every PR/push to `main`:
+
+- **CI** — Black, Ruff, Pytest (`uv`)
+- **Security** — Gitleaks (secrets), Dependency Review, CodeQL (Python + Actions), zizmor (workflow audit), Trivy (fs vulns/secrets)
+- **Dependabot** — weekly Actions + pip updates
+
+Never commit `.config`, `.env`, or enrollment tokens; they stay gitignored. Enable **Secret scanning** / **Push protection** in the repo’s GitHub Security settings for an extra gate on `git push`.
+
 ## Quickstart 🏎️
 
 ```bash
