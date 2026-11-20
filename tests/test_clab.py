@@ -516,6 +516,72 @@ class ContainerlabTests(unittest.TestCase):
             )
             self.assertEqual(path.read_text(), original)
 
+    def test_deploy_can_override_mtu_and_subnet_without_editing_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            original = clab.MARKER + json.dumps(
+                {
+                    "name": "demo",
+                    "mgmt": {"ipv4-subnet": "172.100.100.0/22"},
+                    "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                }
+            )
+            path.write_text(original)
+            args = clab.argparse.Namespace(
+                topology=str(path),
+                host="labhost",
+                mgmt_network="mgmt",
+                mgmt_bridge="mgmt-br0",
+                mgmt_subnet="10.50.0.0/24",
+                mgmt_gateway="10.50.0.1",
+                mgmt_range=None,
+                mgmt_mtu=1500,
+            )
+            with mock.patch.object(
+                clab_deploy,
+                "host_run",
+                return_value=subprocess.CompletedProcess([], 0, "", ""),
+            ) as run:
+                clab.deploy(args)
+            deployed = run.call_args.args[3]
+            parsed = json.loads(
+                subprocess.check_output(
+                    ["yq", "-p=yaml", "-o=json", "."], input=deployed, text=True
+                )
+            )
+            self.assertEqual(
+                parsed["mgmt"],
+                {
+                    "ipv4-subnet": "10.50.0.0/24",
+                    "ipv4-gw": "10.50.0.1",
+                    "network": "mgmt",
+                    "bridge": "mgmt-br0",
+                    "mtu": 1500,
+                },
+            )
+            self.assertEqual(path.read_text(), original)
+
+    def test_deploy_rejects_cidr_as_mgmt_network_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(
+                clab.MARKER
+                + json.dumps(
+                    {
+                        "name": "demo",
+                        "mgmt": {"ipv4-subnet": "172.100.100.0/22"},
+                        "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                    }
+                )
+            )
+            args = clab.argparse.Namespace(
+                topology=str(path),
+                host="labhost",
+                mgmt_network="172.100.100.0/22",
+            )
+            with self.assertRaisesRegex(ValueError, "not a subnet"):
+                clab.deploy(args)
+
     def test_viewer_layout_groups_sites_and_orders_roles(self):
         names = [
             "demo-bb1",

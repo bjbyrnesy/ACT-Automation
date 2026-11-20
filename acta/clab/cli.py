@@ -154,8 +154,9 @@ def main(argv=None):
                 "--mgmt-network",
                 default=config.get("CLAB_MGMT_NETWORK") or None,
                 help=(
-                    "Docker/Podman management network name for this deployment "
-                    "(default: CLAB_MGMT_NETWORK). Distinct from --mgmt-bridge."
+                    "Docker/Podman network name for this deployment "
+                    "(e.g. clab, mgmt — not a CIDR; use --mgmt-subnet for that). "
+                    "Default: CLAB_MGMT_NETWORK."
                 ),
             )
             action.add_argument(
@@ -167,6 +168,27 @@ def main(argv=None):
                     "mgmt network is created; destroy the existing network first "
                     "if changing the bridge on Docker."
                 ),
+            )
+            action.add_argument(
+                "--mgmt-subnet",
+                default=None,
+                help="Override mgmt ipv4-subnet on the host copy only (CIDR)",
+            )
+            action.add_argument(
+                "--mgmt-gateway",
+                default=None,
+                help="Override mgmt ipv4-gw on the host copy only",
+            )
+            action.add_argument(
+                "--mgmt-range",
+                default=None,
+                help="Override mgmt ipv4-range on the host copy only (CIDR)",
+            )
+            action.add_argument(
+                "--mgmt-mtu",
+                type=int,
+                default=None,
+                help="Override mgmt MTU on the host copy only",
             )
         if command == "onboard":
             action.add_argument(
