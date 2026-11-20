@@ -348,7 +348,7 @@ def test_multi_dc_extend_site_b_leaf_leaves_site_a_unchanged(tmp_path: Path):
     text = path.read_text()
     assert "demo-B-leaf3:" in text
     assert "demo-A-leaf3:" not in text
-    assert "ip_addr: 192.168.0.47/24" in text  # B base 34 + 11 + 3 - 1
+    assert "ip_addr: 192.168.0.49/24" in text  # B base 34 + leaf@13 + 3 - 1
     assert "serial_number: demo-B-leaf3" in text
     # Capacity header is per-site baseline; unchanged for multi-DC.
     assert parse_capacity_header(text) == parse_capacity_header(text_before)

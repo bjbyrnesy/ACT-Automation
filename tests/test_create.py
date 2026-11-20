@@ -129,6 +129,8 @@ def test_run_create_asks_sites_and_fabric_mode(
             "demo",
             "",
             "2",  # sites
+            "",  # site 1 name → A
+            "",  # site 2 name → B
             "",  # use case (default datacenter)
             "l3ls",
             "",  # spines per site
@@ -136,6 +138,10 @@ def test_run_create_asks_sites_and_fabric_mode(
             "",  # max spines
             "",  # max leaves
             "0",  # max mleafs
+            "",  # bb redundancy → mlag-peer
+            "",  # bb count → 2
+            "",  # border redundancy → mlag-peer
+            "",  # border count → 2
             "n",  # leaf mlag
             "",  # spine mlag (spines==2)
             "",  # eos
@@ -342,8 +348,20 @@ def test_multi_dc_leaf_growth_does_not_move_uplinks():
     assert uplinks <= _endpoints(grown)
 
 
+def test_emit_named_sites():
+    spec = _multi_dc_spec("l3ls")
+    named = replace(spec, dc_count=2, sites=("dfw", "aus"))
+    text = emit_act_yaml(named)
+    assert "demo-aus-spine1:" in text
+    assert "demo-dfw-border1:" in text
+    # Sorted ordinal: aus=0 ports 1-2, dfw=1 ports 3-4.
+    links = _endpoints(text)
+    assert ("demo-aus-border1", 7, "demo-bb1", 1) in links
+    assert ("demo-dfw-border1", 7, "demo-bb1", 3) in links
+
+
 def test_multi_dc_rejects_bad_mode_and_uplink_overflow():
-    with pytest.raises(ValueError, match="dc_count"):
+    with pytest.raises(ValueError, match="sites|backbone port|dc_count|explicit"):
         emit_act_yaml(_multi_dc_spec("l3ls", dc_count=5))
     spec = _multi_dc_spec("l3ls")
     with pytest.raises(ValueError, match="fabric_mode"):
@@ -396,7 +414,7 @@ def test_node_address_bounds():
         create.node_address("spine", 10)
     with pytest.raises(ValueError, match="mleaf9"):
         create.node_address("mleaf", 9, site_index=0)
-    with pytest.raises(ValueError, match="leaf12"):
-        create.node_address("leaf", 12, site_index=1)
+    with pytest.raises(ValueError, match="leaf10"):
+        create.node_address("leaf", 10, site_index=1)
     with pytest.raises(ValueError, match="unknown"):
         create.node_address("border", 1)
