@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import httpx
+
+RUNNING_LAB_STATE = 2
 
 
 class ActClient:
@@ -19,6 +22,13 @@ class ActClient:
         self._api_key = api_key
         self._token: str | None = None
         self._client = httpx.Client(transport=transport)
+
+    def _auth_headers(self) -> dict[str, str]:
+        if self._token is None:
+            raise RuntimeError(
+                "ACT login is required before calling authenticated APIs"
+            )
+        return {"Authorization": f"Bearer {self._token}"}
 
     def login(self) -> str:
         """Authenticate with ACT and return the bearer token."""
@@ -89,7 +99,7 @@ class ActClient:
             time.sleep(interval)
             response = self._client.get(
                 f"{self._base_url}/operations/{operation_id}",
-                headers={"Authorization": f"Bearer {self._token}"},
+                headers=self._auth_headers(),
             )
             response.raise_for_status()
             result = response.json()
@@ -102,3 +112,73 @@ class ActClient:
         raise TimeoutError(
             f"{label} did not complete after {max_iterations} {iteration_label}"
         )
+
+    def list_labs(self, user: str, *, page_size: int = 200) -> list[dict[str, Any]]:
+        """List labs for ``user`` (``GET /labs?user=&pageSize=``)."""
+        response = self._client.get(
+            f"{self._base_url}/labs",
+            params={"user": user, "pageSize": page_size},
+            headers=self._auth_headers(),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, list):
+            raise TypeError("ACT returned an invalid labs list")
+        return [item for item in result if isinstance(item, dict)]
+
+    def list_running_labs(
+        self, user: str, *, page_size: int = 200
+    ) -> list[dict[str, Any]]:
+        """List labs in Running state (``.state == 2``), matching ``onboard.sh``."""
+        return [
+            lab
+            for lab in self.list_labs(user, page_size=page_size)
+            if lab.get("state") == RUNNING_LAB_STATE
+        ]
+
+    def get_lab(self, lab_id: str) -> dict[str, Any]:
+        """Fetch a single lab by id (``GET /labs/{id}``)."""
+        response = self._client.get(
+            f"{self._base_url}/labs/{lab_id}",
+            headers=self._auth_headers(),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise TypeError("ACT returned an invalid lab")
+        return payload
+
+    def get_topology_content(self, topology_pathname: str) -> dict[str, Any] | None:
+        """Fetch topology JSON content by pathname, or ``None`` if missing."""
+        search = self._client.get(
+            f"{self._base_url}/topologies",
+            params={"topology_pathname": topology_pathname, "pageSize": 1},
+            headers=self._auth_headers(),
+        )
+        search.raise_for_status()
+        payload = search.json()
+        result = payload.get("result") if isinstance(payload, dict) else None
+        if not isinstance(result, list) or not result:
+            return None
+        first = result[0]
+        if not isinstance(first, dict):
+            return None
+        topology_id = first.get("id")
+        if not isinstance(topology_id, str) or not topology_id:
+            return None
+
+        detail = self._client.get(
+            f"{self._base_url}/topologies/{topology_id}",
+            headers=self._auth_headers(),
+        )
+        detail.raise_for_status()
+        body = detail.json()
+        if not isinstance(body, dict):
+            return None
+        content = body.get("topology")
+        if content is None:
+            content = body.get("file")
+        if isinstance(content, dict):
+            return content
+        return None

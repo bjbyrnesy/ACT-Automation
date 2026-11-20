@@ -131,3 +131,62 @@ def test_poll_operation_times_out():
             max_iterations=1,
             interval=0,
         )
+
+
+def test_list_running_labs_filters_state_two():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/auth/login"):
+            return httpx.Response(200, json={"token": "bearer-token"})
+        assert request.url.path.endswith("/labs")
+        assert request.url.params["user"] == "alice"
+        assert request.url.params["pageSize"] == "200"
+        return httpx.Response(
+            200,
+            json={
+                "result": [
+                    {"id": "1", "name": "a", "state": 2},
+                    {"id": "2", "name": "b", "state": 1},
+                    {"id": "3", "name": "c", "state": 2},
+                ]
+            },
+        )
+
+    client = ActClient(
+        "https://tenant.example/rest/v1",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    )
+    client.login()
+
+    running = client.list_running_labs("alice")
+    assert [lab["id"] for lab in running] == ["1", "3"]
+
+
+def test_get_lab_and_topology_content():
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/auth/login"):
+            return httpx.Response(200, json={"token": "bearer-token"})
+        if path.endswith("/labs/lab-1"):
+            return httpx.Response(
+                200,
+                json={"id": "lab-1", "topology_definition": "demo.yml"},
+            )
+        if path.endswith("/topologies") and request.method == "GET":
+            return httpx.Response(200, json={"result": [{"id": "topo-1"}]})
+        if path.endswith("/topologies/topo-1"):
+            return httpx.Response(
+                200,
+                json={"topology": {"veos": {"password": "p"}}},
+            )
+        raise AssertionError(path)
+
+    client = ActClient(
+        "https://tenant.example/rest/v1",
+        "secret",
+        transport=httpx.MockTransport(handler),
+    )
+    client.login()
+
+    assert client.get_lab("lab-1")["id"] == "lab-1"
+    assert client.get_topology_content("demo.yml") == {"veos": {"password": "p"}}
