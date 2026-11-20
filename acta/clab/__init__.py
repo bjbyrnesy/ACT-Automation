@@ -10,6 +10,7 @@ from .destroy import destroy
 from .generate import BASE_CONFIG, generate, management_settings, yaml_text
 from .layout import topology_layout, viewer_annotations
 from .onboard import (
+    ceos_nodes,
     check_onboarding_host,
     enrollment_token,
     onboard,
@@ -73,6 +74,7 @@ __all__ = [
     "SUPPORT_SCRIPT",
     "act_hostname",
     "argparse",
+    "ceos_nodes",
     "check_onboarding_host",
     "config_flag",
     "config_image",

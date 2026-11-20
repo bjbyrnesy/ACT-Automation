@@ -693,6 +693,74 @@ links:
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("more than one link", result.stderr)
 
+    def test_onboard_skips_linux_hosts(self):
+        token = enrollment_jwt()
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(
+                clab.MARKER
+                + json.dumps(
+                    {
+                        "name": "demo",
+                        "prefix": "",
+                        "topology": {
+                            "nodes": {
+                                "leaf1": {"kind": "arista_ceos"},
+                                "host1": {
+                                    "kind": "linux",
+                                    "image": "ghcr.io/srl-labs/network-multitool:v0.10.0",
+                                },
+                            }
+                        },
+                    }
+                )
+            )
+            args = clab.argparse.Namespace(
+                topology=str(path),
+                host=None,
+                endpoint="www.arista.io",
+                config={},
+                disableaaa=False,
+            )
+            calls = []
+
+            def host(host, script, argv, data):
+                calls.append((argv, data))
+                return subprocess.CompletedProcess([], 0, "", "")
+
+            with (
+                mock.patch.object(
+                    clab_onboard, "check_onboarding_host", return_value="podman"
+                ),
+                mock.patch.object(clab_onboard, "wait_for_eos", return_value=True),
+                mock.patch.object(clab_onboard, "host_run", side_effect=host),
+                mock.patch.object(clab.getpass, "getpass", return_value=token),
+                mock.patch("builtins.input", return_value="y"),
+            ):
+                clab.onboard(args)
+            containers = [c[0][0] for c in calls]
+            self.assertEqual(containers, ["leaf1"])
+            self.assertTrue(all("host1" not in c[0] for c in calls))
+
+    def test_check_onboarding_host_ignores_missing_linux_hosts(self):
+        lab = {
+            "name": "demo",
+            "prefix": "",
+            "topology": {
+                "nodes": {
+                    "leaf1": {"kind": "arista_ceos"},
+                    "host1": {"kind": "linux", "image": "x"},
+                }
+            },
+        }
+
+        def run(host, script, argv, data):
+            # Only cEOS is running; linux jumphost is down.
+            return subprocess.CompletedProcess([], 0, "leaf1\n", "")
+
+        with mock.patch.object(clab_onboard, "host_run", side_effect=run):
+            self.assertEqual(clab.check_onboarding_host(None, lab, "podman"), "podman")
+
     def test_onboard_reports_partial_failure_without_leaking_token(self):
         token = enrollment_jwt()
         with tempfile.TemporaryDirectory() as d:

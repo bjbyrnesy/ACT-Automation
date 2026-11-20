@@ -83,7 +83,11 @@ def test_run_onboard_act_pastes_snippet_via_injected_ssh():
             "veos": [
                 {"hostname": "spine1", "internal_ip": "10.0.0.1"},
                 {"hostname": "leaf1", "internal_ip": "10.0.0.2"},
-            ]
+            ],
+            # Generic/jumphost devices must never be SSH-onboarded.
+            "generic": [
+                {"hostname": "host1", "internal_ip": "10.0.0.99"},
+            ],
         },
     }
     topology_detail = {
@@ -93,6 +97,7 @@ def test_run_onboard_act_pastes_snippet_via_injected_ssh():
             "nodes": [
                 {"spine1": {"node_type": "veos"}},
                 {"leaf1": {"node_type": "veos"}},
+                {"host1": {"node_type": "generic"}},
             ],
         },
     }

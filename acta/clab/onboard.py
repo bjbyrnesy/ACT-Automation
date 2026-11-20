@@ -27,9 +27,24 @@ from .support import (
 )
 
 
+def ceos_nodes(lab):
+    """Return ``(name, node)`` pairs for ``arista_ceos`` only (skip linux hosts)."""
+    nodes = lab.get("topology", {}).get("nodes") or {}
+    if not isinstance(nodes, dict):
+        return []
+    out = []
+    for name, node in nodes.items():
+        if isinstance(node, dict) and node.get("kind") == "arista_ceos":
+            out.append((name, node))
+    return out
+
+
 def check_onboarding_host(host, lab, runtime=None):
     hint = " Use --host user@lab-host if your lab runs remotely." if not host else ""
-    expected = {container_name(lab, node) for node in lab["topology"]["nodes"]}
+    # Only require cEOS containers — linux jumphosts are not onboarded to CVaaS.
+    expected = {container_name(lab, name) for name, _ in ceos_nodes(lab)}
+    if not expected:
+        fail(f"Lab {lab.get('name', '?')} has no arista_ceos nodes to onboard.")
     candidates = {
         "docker": ("docker", "sudo-docker"),
         "podman": ("podman", "sudo-podman"),
@@ -56,7 +71,7 @@ def check_onboarding_host(host, lab, runtime=None):
     sample = ", ".join(missing[:5])
     more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
     fail(
-        f"Missing {len(missing)}/{len(expected)} container(s) for lab {lab['name']} "
+        f"Missing {len(missing)}/{len(expected)} cEOS container(s) for lab {lab['name']} "
         f"on {host or 'the local machine'} ({candidate}): {sample}{more}. "
         f"Deploy the topology on this host first.{hint}"
     )
@@ -137,16 +152,20 @@ def onboard(args):
         config_ip_list(config, "CLAB_DNS", ["8.8.8.8", "1.1.1.1"]), "name-server"
     )
     ntp_servers = parse_ipv4_list(config_ip_list(config, "CLAB_NTP"), "ntp-server")
+    targets = ceos_nodes(lab)
+    if not targets:
+        fail(f"Lab {lab['name']} has no arista_ceos nodes to onboard.")
+    skipped = len(lab["topology"]["nodes"]) - len(targets)
+    skip_note = f" (skipping {skipped} linux host(s))" if skipped else ""
     print(
-        f"Onboarding {len(lab['topology']['nodes'])} cEOS node(s) in {lab['name']} to {endpoint}."
+        f"Onboarding {len(targets)} cEOS node(s) in {lab['name']} to {endpoint}.{skip_note}"
     )
     if input("Continue? [y/N] ").strip().lower() not in ("y", "yes"):
         print("Aborted.")
         return
     failures = []
-    for node in lab["topology"]["nodes"]:
+    for node, node_data in targets:
         container = container_name(lab, node)
-        node_data = lab["topology"]["nodes"][node]
         env = node_data.get("env", {})
         hostname = inventory_hostname(lab["name"], node, node_data)
         mgmt_vrf = (
