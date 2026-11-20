@@ -5,7 +5,6 @@ import io
 import json
 import os
 import shlex
-import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -41,7 +40,8 @@ class ContainerlabTests(unittest.TestCase):
             out = Path(d) / "lab.clab.yml"
             cmd = [
                 "python3",
-                str(ROOT / "clab.py"),
+                str(ROOT / "acta.py"),
+                "clab",
                 "generate",
                 str(source),
                 "--name",
@@ -110,7 +110,8 @@ class ContainerlabTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     "python3",
-                    str(ROOT / "clab.py"),
+                    str(ROOT / "acta.py"),
+                    "clab",
                     "generate",
                     str(source),
                     "--name",
@@ -168,7 +169,8 @@ class ContainerlabTests(unittest.TestCase):
             output = Path(d) / "lab.yml"
             cmd = [
                 "python3",
-                str(ROOT / "clab.py"),
+                str(ROOT / "acta.py"),
+                "clab",
                 "generate",
                 str(source),
                 "--name",
@@ -202,7 +204,8 @@ class ContainerlabTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     "python3",
-                    str(ROOT / "clab.py"),
+                    str(ROOT / "acta.py"),
+                    "clab",
                     "generate",
                     str(source),
                     "--name",
@@ -234,7 +237,8 @@ class ContainerlabTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     "python3",
-                    str(ROOT / "clab.py"),
+                    str(ROOT / "acta.py"),
+                    "clab",
                     "generate",
                     str(source),
                     "--name",
@@ -271,7 +275,8 @@ class ContainerlabTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     "python3",
-                    str(ROOT / "clab.py"),
+                    str(ROOT / "acta.py"),
+                    "clab",
                     "generate",
                     str(source),
                     "--name",
@@ -316,7 +321,8 @@ class ContainerlabTests(unittest.TestCase):
             output = Path(d) / "lab.yml"
             command = [
                 "python3",
-                str(ROOT / "clab.py"),
+                str(ROOT / "acta.py"),
+                "clab",
                 "generate",
                 str(source),
                 "--name",
@@ -353,7 +359,8 @@ class ContainerlabTests(unittest.TestCase):
             output = Path(d) / "lab.yml"
             command = [
                 "python3",
-                str(ROOT / "clab.py"),
+                str(ROOT / "acta.py"),
+                "clab",
                 "generate",
                 str(source),
                 "--name",
@@ -393,7 +400,8 @@ class ContainerlabTests(unittest.TestCase):
             output = Path(d) / "lab.yml"
             command = [
                 "python3",
-                str(ROOT / "clab.py"),
+                str(ROOT / "acta.py"),
+                "clab",
                 "generate",
                 str(source),
                 "--name",
@@ -533,26 +541,39 @@ class ContainerlabTests(unittest.TestCase):
             self.assertGreater(group["height"], 0)
 
     def test_real_generator_topologies_convert_with_all_links(self):
+        from acta.capacity import Capacity
+        from acta.create import FabricSpec, emit_act_yaml
+
+        def _spec(fabric_mode, *, dc_count=1):
+            return FabricSpec(
+                hostname_prefix="demo",
+                serial_prefix="demo",
+                eos_version="4.35.4M",
+                capacity=Capacity(
+                    fabric_mode=fabric_mode,
+                    max_spines=2 if fabric_mode == "l2" else 4,
+                    max_leaves=8,
+                    max_mleafs_per_pair=1,
+                    spines=2,
+                    leaves=4,
+                ),
+                mlag_pairs=True,
+                spine_mlag=False,
+                member_leaf_pairs=[1],
+                member_leaves_per_pair=1,
+                dc_count=dc_count,
+            )
+
         cases = [
-            ("demo\n\n1\n2\n4\ny\ny\n1\n1\ny\n\ny\n", "single", None),
-            # multi-site inserts fabric mode after site count (l3ls keeps borders)
-            ("demo\n\n2\nl3ls\n2\n4\ny\ny\n1\n1\ny\ny\n\ny\n", "multi", "l3ls"),
-            ("demo\n\n2\nl2\n2\n4\ny\ny\n1\n1\ny\ny\n\ny\n", "multi-l2", "l2"),
+            (_spec(None), "single", None),
+            (_spec("l3ls", dc_count=2), "multi", "l3ls"),
+            (_spec("l2", dc_count=2), "multi-l2", "l2"),
         ]
-        for answers, name, fabric in cases:
+        for spec, name, fabric in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as d:
-                for file in ("generate.sh", "_common.sh"):
-                    shutil.copy(ROOT / file, d)
-                result = subprocess.run(
-                    ["bash", str(Path(d) / "generate.sh")],
-                    input=answers,
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                source = next(Path(d).glob("topology-*.yml"))
-                text = source.read_text()
+                source = Path(d) / "topology-demo.yml"
+                text = emit_act_yaml(spec)
+                source.write_text(text, encoding="utf-8")
                 if fabric == "l2":
                     self.assertNotIn("-border", text)
                     self.assertIn("-bb1:", text)
@@ -564,7 +585,8 @@ class ContainerlabTests(unittest.TestCase):
                 convert = subprocess.run(
                     [
                         "python3",
-                        str(ROOT / "clab.py"),
+                        str(ROOT / "acta.py"),
+                        "clab",
                         "generate",
                         str(source),
                         "--name",
@@ -628,7 +650,8 @@ links:
             result = subprocess.run(
                 [
                     "python3",
-                    str(ROOT / "clab.py"),
+                    str(ROOT / "acta.py"),
+                    "clab",
                     "generate",
                     str(path),
                     "--name",

@@ -20,7 +20,8 @@ def main(argv=None):
     )
     sub = parser.add_subparsers(dest="command", required=True)
     gen = sub.add_parser(
-        "generate", help="Convert a generate.sh ACT topology to containerlab YAML"
+        "generate",
+        help="Convert an acta.py create ACT topology to containerlab YAML",
     )
     gen.add_argument("source")
     gen.add_argument(
