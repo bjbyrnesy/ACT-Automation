@@ -1,0 +1,590 @@
+"""Terminal topology summary: MLAG pairs + inline Graphviz PNG when supported."""
+
+from __future__ import annotations
+
+import base64
+import ipaddress
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+from collections import Counter
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from rich.console import Console
+from rich.table import Table
+
+from acta.attach import attached_hosts, host_links
+from acta.capacity import HARD_PORT_MAX, parse_capacity_header
+from acta.diagram import topology_to_dot, write_png
+from acta.extend import leaf_mlag_pairs, member_leaf_parents, member_leaves
+from acta.topology import parse_connections, used_ports_from_connections
+
+_NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
+_NODE_BLOCK_RE = re.compile(
+    r"^  - (?P<name>[^:\n]+):\n(?P<body>(?:      .+\n)*)",
+    re.MULTILINE,
+)
+_IP_RE = re.compile(r"ip_addr:\s*(?P<ip>[^\s/]+)")
+_CLAB_MGMT_RE = re.compile(
+    r"^ {4}(?P<name>\S+):\n(?: {6}.+\n)*? {6}mgmt-ipv4:\s*(?P<ip>\S+)\s*$",
+    re.MULTILINE,
+)
+_CLAB_NAME_RE = re.compile(r"^name:\s*(?P<name>\S+)\s*$", re.MULTILINE)
+_ROLE_RE = re.compile(
+    r"(?:^|-)(?P<role>border|spine|leaf|mleaf|bb|host)(?P<index>[1-9]\d*)$"
+)
+_SSH_TIMEOUT = 0.35
+_SSH_USER = "admin"
+
+# Terminals known to speak Kitty graphics or iTerm2 inline images.
+_KITTY_TERM_PROGRAMS = frozenset(
+    {
+        "ghostty",
+        "kitty",
+        "wezterm",
+        "herdr",  # Cursor/agent host terminal in this lab
+    }
+)
+
+
+def _node_role(name: str) -> str | None:
+    match = _ROLE_RE.search(name)
+    return match.group("role") if match else None
+
+
+def _list_nodes(text: str) -> list[str]:
+    return [match.group("name").strip() for match in _NODE_RE.finditer(text)]
+
+
+def _free_access_ports(text: str, switch: str) -> list[int]:
+    used = used_ports_from_connections(parse_connections(text), switch)
+    return [port for port in range(1, HARD_PORT_MAX + 1) if port not in used]
+
+
+def _peer_ports(text: str, leaf_a: str, leaf_b: str) -> list[int]:
+    ports: list[int] = []
+    for conn in parse_connections(text):
+        ends = {conn.a_node, conn.b_node}
+        if ends == {leaf_a, leaf_b}:
+            if conn.a_node == leaf_a:
+                ports.append(conn.a_port)
+            else:
+                ports.append(conn.b_port)
+    return sorted(set(ports))
+
+
+def _site_of(name: str) -> str:
+    match = re.search(r"-(?P<site>[A-D])-", name)
+    return match.group("site") if match else "-"
+
+
+def _strip_ip(value: str) -> str:
+    return value.strip().split("/", 1)[0]
+
+
+def _sibling_clab_path(path: Path) -> Path | None:
+    if path.name.endswith(".clab.yml"):
+        return path if path.is_file() else None
+    if path.name.endswith(".clab.yaml"):
+        return path if path.is_file() else None
+    candidates = [
+        path.with_suffix(".clab.yml"),
+        path.with_name(f"{path.stem}.clab.yml"),
+        path.with_name(
+            path.name.replace(".yml", ".clab.yml").replace(".yaml", ".clab.yaml")
+        ),
+    ]
+    try:
+        from acta.clab.support import hostname_prefix_from_act
+
+        prefix = hostname_prefix_from_act(path)
+        if prefix:
+            candidates.append(path.with_name(f"{prefix}.clab.yml"))
+    except OSError, ValueError:
+        pass
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _mgmt_ips_from_act(text: str) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for match in _NODE_BLOCK_RE.finditer(text):
+        ip_match = _IP_RE.search(match.group("body"))
+        if ip_match:
+            found[match.group("name").strip()] = _strip_ip(ip_match.group("ip"))
+    return found
+
+
+def _mgmt_ips_from_clab(text: str) -> dict[str, str]:
+    return {
+        match.group("name"): _strip_ip(match.group("ip"))
+        for match in _CLAB_MGMT_RE.finditer(text)
+    }
+
+
+def _inspect_mgmt_ips(lab_name: str | None, clab_path: Path | None) -> dict[str, str]:
+    """Best-effort live mgmt IPs from ``containerlab inspect``."""
+    commands: list[list[str]] = []
+    if clab_path is not None:
+        commands.append(["containerlab", "inspect", "-t", str(clab_path), "-f", "json"])
+    if lab_name:
+        commands.append(["containerlab", "inspect", "--name", lab_name, "-f", "json"])
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except OSError, subprocess.TimeoutExpired:
+            continue
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            continue
+        rows: list[dict] = []
+        if isinstance(payload, list):
+            rows = [row for row in payload if isinstance(row, dict)]
+        elif isinstance(payload, dict):
+            for value in payload.values():
+                if isinstance(value, list):
+                    rows.extend(row for row in value if isinstance(row, dict))
+        found: dict[str, str] = {}
+        for row in rows:
+            name = str(row.get("name") or "")
+            ipv4 = row.get("ipv4_address") or row.get("ipv4") or ""
+            if not name or not ipv4:
+                continue
+            # prefix:"" → name is hostname; legacy clab-<lab>-<node> → strip.
+            short = name
+            if lab_name and name.startswith(f"clab-{lab_name}-"):
+                short = name[len(f"clab-{lab_name}-") :]
+            found[short] = _strip_ip(str(ipv4))
+        if found:
+            return found
+    return {}
+
+
+def collect_mgmt_ips(path: Path, text: str) -> dict[str, str]:
+    """Hostname → management IPv4 from ACT, sibling clab, and live inspect."""
+    ips = _mgmt_ips_from_act(text)
+    clab_path = _sibling_clab_path(path)
+    lab_name: str | None = None
+    if clab_path is not None:
+        clab_text = (
+            text
+            if clab_path.resolve() == path.resolve()
+            else clab_path.read_text(encoding="utf-8")
+        )
+        ips.update(_mgmt_ips_from_clab(clab_text))
+        name_match = _CLAB_NAME_RE.search(clab_text)
+        if name_match:
+            lab_name = name_match.group("name")
+    ips.update(_inspect_mgmt_ips(lab_name, clab_path))
+    return ips
+
+
+def tcp_ssh_open(ip: str, *, timeout: float = _SSH_TIMEOUT) -> bool:
+    """Return True when TCP/22 accepts a connection from this host."""
+    try:
+        with socket.create_connection((ip, 22), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _podman_machine_available() -> bool:
+    if shutil.which("podman") is None:
+        return False
+    try:
+        result = subprocess.run(
+            ["podman", "machine", "ssh", "--", "true"],
+            capture_output=True,
+            timeout=8,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return False
+    return result.returncode == 0
+
+
+def _validate_probe_ips(ips: list[str]) -> list[str]:
+    """Keep only dotted IPv4 addresses (blocks shell injection in remote probes)."""
+    safe: list[str] = []
+    for raw in ips:
+        try:
+            address = ipaddress.IPv4Address(raw.split("/", 1)[0])
+        except ValueError:
+            continue
+        safe.append(str(address))
+    return safe
+
+
+def _probe_ips_via_podman_machine(ips: list[str]) -> set[str]:
+    """Batch TCP/22 probes inside the Podman VM (where clab mgmt lives on macOS)."""
+    safe = _validate_probe_ips(ips)
+    if not safe:
+        return set()
+    remote = " ; ".join(
+        f'timeout 1 bash -c "echo >/dev/tcp/{ip}/22" 2>/dev/null && echo OK {ip}'
+        for ip in safe
+    )
+    try:
+        result = subprocess.run(
+            ["podman", "machine", "ssh", "--", "bash", "-c", remote],
+            capture_output=True,
+            text=True,
+            timeout=max(15, 2 * len(safe)),
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return set()
+    return {
+        line.split()[1]
+        for line in result.stdout.splitlines()
+        if line.startswith("OK ") and len(line.split()) >= 2
+    }
+
+
+def probe_ssh_reachable(
+    candidates: dict[str, str],
+    *,
+    probe: Callable[[str], bool] | None = None,
+) -> dict[str, str]:
+    """Return ``{hostname: ip}`` for candidates whose SSH port is open.
+
+    On macOS the containerlab management bridge lives inside the Podman machine,
+    so local probes often fail even when the lab is healthy. After a local pass,
+    unreachable IPs are re-checked via ``podman machine ssh`` when available.
+    """
+    if not candidates:
+        return {}
+    if probe is not None:
+        reachable: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=min(32, len(candidates))) as pool:
+            futures = {
+                pool.submit(probe, ip): (name, ip) for name, ip in candidates.items()
+            }
+            for future in as_completed(futures):
+                name, ip = futures[future]
+                try:
+                    if future.result():
+                        reachable[name] = ip
+                except OSError:
+                    continue
+        return reachable
+
+    unique_ips = list(dict.fromkeys(candidates.values()))
+    open_ips = {ip for ip in unique_ips if tcp_ssh_open(ip)}
+    missing = [ip for ip in unique_ips if ip not in open_ips]
+    if missing and _podman_machine_available():
+        open_ips |= _probe_ips_via_podman_machine(missing)
+    return {name: ip for name, ip in candidates.items() if ip in open_ips}
+
+
+def ensure_topology_png(topology: Path, text: str | None = None) -> Path | None:
+    """Write/refresh ``topology.with_suffix('.png')`` via Graphviz when possible."""
+    source = text if text is not None else topology.read_text(encoding="utf-8")
+    png_path = topology.with_suffix(".png")
+    if not write_png(topology_to_dot(source), png_path):
+        return None
+    return png_path if png_path.is_file() else None
+
+
+def _supports_kitty_graphics() -> bool:
+    if os.environ.get("KITTY_WINDOW_ID"):
+        return True
+    term = (os.environ.get("TERM") or "").casefold()
+    if "kitty" in term:
+        return True
+    program = (os.environ.get("TERM_PROGRAM") or "").casefold()
+    return program in _KITTY_TERM_PROGRAMS
+
+
+def _supports_iterm_images() -> bool:
+    return (os.environ.get("TERM_PROGRAM") or "") == "iTerm.app"
+
+
+def _write_kitty_png(png_path: Path, stream) -> None:
+    """Emit a PNG via the Kitty graphics protocol (Ghostty/Kitty/WezTerm)."""
+    payload = base64.standard_b64encode(png_path.read_bytes()).decode("ascii")
+    chunk_size = 4096
+    first = True
+    while payload:
+        chunk, payload = payload[:chunk_size], payload[chunk_size:]
+        more = 1 if payload else 0
+        if first:
+            header = f"\033_Ga=T,f=100,m={more};"
+            first = False
+        else:
+            header = f"\033_Gm={more};"
+        stream.write(f"{header}{chunk}\033\\")
+    stream.write("\n")
+    stream.flush()
+
+
+def _write_iterm_png(png_path: Path, stream) -> None:
+    data = png_path.read_bytes()
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    name = base64.standard_b64encode(png_path.name.encode()).decode("ascii")
+    stream.write(f"\033]1337;File=name={name};inline=1;size={len(data)}:{b64}\a\n")
+    stream.flush()
+
+
+def display_png_inline(png_path: Path, *, force: bool = False) -> bool:
+    """Show ``png_path`` inline when the terminal supports it. Return True on success."""
+    if not png_path.is_file():
+        return False
+    out = sys.stdout
+    if not force and not out.isatty():
+        return False
+    try:
+        if _supports_kitty_graphics():
+            _write_kitty_png(png_path, out)
+            return True
+        if _supports_iterm_images():
+            _write_iterm_png(png_path, out)
+            return True
+        if force:
+            # User insisted on inline; prefer detected protocol above, Kitty last.
+            _write_kitty_png(png_path, out)
+            return True
+    except OSError:
+        return False
+    return False
+
+
+def _ssh_user_for(name: str, hosts: set[str]) -> str:
+    # Multitool jumphosts use root; cEOS switches use admin.
+    if name in hosts:
+        return "root"
+    return _SSH_USER
+
+
+def _print_ssh_reachable(
+    path: Path,
+    text: str,
+    nodes: list[str],
+    hosts: list[str],
+    console: Console,
+    *,
+    probe: Callable[[str], bool] | None = None,
+    skip_probe: bool = False,
+) -> None:
+    if skip_probe:
+        return
+    candidates = {
+        name: ip
+        for name, ip in collect_mgmt_ips(path, text).items()
+        if name in set(nodes) or name in hosts
+    }
+    reachable = probe_ssh_reachable(candidates, probe=probe)
+    table = Table(title="SSH reachable  (TCP/22 on management IP)", show_lines=False)
+    table.add_column("node")
+    table.add_column("role")
+    table.add_column("ssh")
+    if not reachable:
+        table.add_row("(none)", "", "")
+        console.print(table)
+        console.print(
+            "[dim]No open SSH ports on known management IPs "
+            "(lab down, IPs not routed here, or missing mgmt-ipv4). "
+            "On macOS, probes also run inside the Podman machine.[/]"
+        )
+        console.print()
+        return
+    host_set = set(hosts)
+    for name in sorted(reachable, key=lambda item: (item not in host_set, item)):
+        role = "host" if name in host_set else (_node_role(name) or "other")
+        ip = reachable[name]
+        user = _ssh_user_for(name, host_set)
+        table.add_row(name, role, f"{user}@{ip}")
+    console.print(table)
+    console.print()
+
+
+def _summary_and_mlag(
+    path: Path,
+    text: str,
+    nodes: list[str],
+    console: Console,
+    *,
+    probe: Callable[[str], bool] | None = None,
+    skip_probe: bool = False,
+) -> None:
+    try:
+        capacity = parse_capacity_header(text)
+    except ValueError:
+        capacity = None
+    hosts = attached_hosts(text)
+    host_set = set(hosts)
+    roles = Counter(
+        _node_role(name) or "other" for name in nodes if name not in host_set
+    )
+    if hosts:
+        roles["host"] = len(hosts)
+
+    summary = Table(title=f"Topology: {path.name}", show_header=False, box=None)
+    summary.add_row("nodes", str(len(nodes)))
+    for role in ("spine", "leaf", "mleaf", "border", "bb", "host", "other"):
+        if roles.get(role):
+            summary.add_row(role, str(roles[role]))
+    if capacity is not None:
+        summary.add_row("fabric_mode", capacity.fabric_mode or "none")
+        summary.add_row("use_case", capacity.use_case or "none")
+        summary.add_row(
+            "capacity",
+            f"spines {capacity.spines}/{capacity.max_spines} "
+            f"leaves {capacity.leaves}/{capacity.max_leaves}",
+        )
+    console.print(summary)
+    console.print()
+
+    pairs = leaf_mlag_pairs(text)
+    mlag = Table(
+        title="MLAG leaf pairs  (use --mlag-pair N with attach)", show_lines=False
+    )
+    mlag.add_column("#", style="cyan", justify="right")
+    mlag.add_column("leaf-a")
+    mlag.add_column("leaf-b")
+    mlag.add_column("peer ports")
+    mlag.add_column("free ports (a)")
+    mlag.add_column("site", justify="center")
+    if not pairs:
+        mlag.add_row("-", "(none)", "", "", "", "")
+    for index, (leaf_a, leaf_b) in enumerate(pairs, start=1):
+        free_a = _free_access_ports(text, leaf_a)
+        free_preview = ",".join(str(p) for p in free_a[:6])
+        if len(free_a) > 6:
+            free_preview += ",…"
+        mlag.add_row(
+            str(index),
+            leaf_a,
+            leaf_b,
+            ",".join(str(p) for p in _peer_ports(text, leaf_a, leaf_b)) or "-",
+            free_preview or "-",
+            _site_of(leaf_a),
+        )
+    console.print(mlag)
+    console.print()
+
+    mleafs = member_leaves(text)
+    members = Table(
+        title="Member leaves  (use --mleaf N with attach)", show_lines=False
+    )
+    members.add_column("#", style="cyan", justify="right")
+    members.add_column("mleaf")
+    members.add_column("mlag-pair", justify="right")
+    members.add_column("leaf-a")
+    members.add_column("leaf-b")
+    members.add_column("free ports")
+    members.add_column("site", justify="center")
+    if not mleafs:
+        members.add_row("-", "(none)", "", "", "", "", "")
+    for index, name in enumerate(mleafs, start=1):
+        pair_index, parents = member_leaf_parents(text, name)
+        free = _free_access_ports(text, name)
+        free_preview = ",".join(str(p) for p in free[:6])
+        if len(free) > 6:
+            free_preview += ",…"
+        leaf_a = parents[0] if parents else "-"
+        leaf_b = parents[1] if parents else "-"
+        members.add_row(
+            str(index),
+            name,
+            str(pair_index) if pair_index is not None else "-",
+            leaf_a,
+            leaf_b,
+            free_preview or "-",
+            _site_of(name),
+        )
+    console.print(members)
+    console.print()
+
+    attached = Table(title="Attached hosts", show_lines=False)
+    attached.add_column("#", style="cyan", justify="right")
+    attached.add_column("host")
+    attached.add_column("uplinks")
+    if not hosts:
+        attached.add_row("-", "(none)", "")
+    for index, name in enumerate(hosts, start=1):
+        links = host_links(text, name)
+        if links:
+            uplink = ", ".join(
+                f"eth{host_port}→{switch}:Ethernet{sw_port}"
+                for host_port, switch, sw_port in links
+            )
+        else:
+            uplink = "(no links)"
+        attached.add_row(str(index), name, uplink)
+    console.print(attached)
+    console.print()
+
+    _print_ssh_reachable(
+        path, text, nodes, hosts, console, probe=probe, skip_probe=skip_probe
+    )
+
+
+def render_show(
+    path: Path,
+    *,
+    console: Console | None = None,
+    plain: bool = False,
+    force_image: bool = False,
+    probe: Callable[[str], bool] | None = None,
+    skip_probe: bool = False,
+) -> None:
+    """Print summary/MLAG, then the Graphviz PNG inline when supported."""
+    console = console or Console()
+    text = path.read_text(encoding="utf-8")
+    nodes = _list_nodes(text)
+    _summary_and_mlag(path, text, nodes, console, probe=probe, skip_probe=skip_probe)
+
+    png_path = ensure_topology_png(path, text)
+    if png_path is None:
+        console.print(
+            "[yellow]Graphviz `dot` not available — cannot render fabric PNG.[/]"
+        )
+        return
+
+    console.print(f"[dim]Fabric diagram:[/] {png_path}")
+    if plain and not force_image:
+        return
+    if display_png_inline(png_path, force=force_image):
+        return
+    console.print(
+        "[dim]Terminal does not advertise inline images "
+        "(Kitty/Ghostty/WezTerm/iTerm2). Open the PNG above, "
+        "or pass --image to force Kitty graphics.[/]"
+    )
+
+
+def run_show(
+    path: Path,
+    *,
+    plain: bool = False,
+    force_image: bool = False,
+    skip_probe: bool = False,
+) -> int:
+    if not path.is_file():
+        raise FileNotFoundError(f"topology not found: {path}")
+    # Pipes/CI: skip inline graphics unless forced.
+    if not force_image and (plain or not sys.stdout.isatty()):
+        plain = True
+    # Avoid slow/flaky probes in non-interactive CI unless explicitly wanted.
+    if not skip_probe and not sys.stdout.isatty() and not force_image:
+        skip_probe = True
+    render_show(path, plain=plain, force_image=force_image, skip_probe=skip_probe)
+    return 0

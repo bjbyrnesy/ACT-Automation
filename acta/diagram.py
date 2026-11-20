@@ -23,9 +23,15 @@ _FILL = {
     "spine": "#dbeafe",
     "leaf": "#fef3c7",
     "mleaf": "#fce7f3",
+    "host": "#cffafe",
 }
 _MLAG_COLOR = "#dc2626"
 _BB_COLOR = "#059669"
+_HOST_COLOR = "#0891b2"
+_HOSTS_PER_ROW = 6
+_FABRIC_ROLES = ("bb", "border", "spine", "leaf", "mleaf")
+_GENERIC_TYPE_RE = re.compile(r"node_type:\s*generic\b")
+_HOST_INDEX_RE = re.compile(r"(?:^|-)host(?P<index>[1-9]\d*)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -77,11 +83,27 @@ def write_png(dot_source: str, png_path: Path) -> bool:
 
 def _parse_nodes(topology_source: str) -> list[_Node]:
     nodes: list[_Node] = []
+    host_ordinal = 0
     for match in _NODE_BLOCK_RE.finditer(topology_source):
         name = match.group("name").strip()
         body = match.group("body")
         ip_match = _IP_RE.search(body)
         ip = ip_match.group("ip") if ip_match else ""
+        if _GENERIC_TYPE_RE.search(body):
+            host_ordinal += 1
+            index_match = _HOST_INDEX_RE.search(name)
+            index = int(index_match.group("index")) if index_match else host_ordinal
+            nodes.append(
+                _Node(
+                    name=name,
+                    role="host",
+                    site=None,
+                    index=index,
+                    ip=ip,
+                    dot_id=_host_dot_id(name, index),
+                )
+            )
+            continue
         parsed = _parse_identity(name)
         if parsed is None:
             continue
@@ -102,7 +124,49 @@ def _parse_nodes(topology_source: str) -> list[_Node]:
                 dot_id=dot_id,
             )
         )
-    return nodes
+    return _with_host_sites(nodes, parse_connections(topology_source))
+
+
+def _host_dot_id(name: str, index: int) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", name)
+    if safe and safe[0].isalpha():
+        return safe
+    return f"host{index}_{safe}" if safe else f"host{index}"
+
+
+def _with_host_sites(nodes: list[_Node], connections: list[Connection]) -> list[_Node]:
+    """Attach hosts to a site when all fabric peers share one site letter."""
+    by_name = {node.name: node for node in nodes}
+    assigned: list[_Node] = []
+    for node in nodes:
+        if node.role != "host":
+            assigned.append(node)
+            continue
+        peer_sites: set[str] = set()
+        for conn in connections:
+            if conn.a_node == node.name:
+                peer = by_name.get(conn.b_node)
+            elif conn.b_node == node.name:
+                peer = by_name.get(conn.a_node)
+            else:
+                continue
+            if peer is not None and peer.site is not None:
+                peer_sites.add(peer.site)
+        site = next(iter(peer_sites)) if len(peer_sites) == 1 else None
+        if site == node.site:
+            assigned.append(node)
+            continue
+        assigned.append(
+            _Node(
+                name=node.name,
+                role=node.role,
+                site=site,
+                index=node.index,
+                ip=node.ip,
+                dot_id=node.dot_id,
+            )
+        )
+    return assigned
 
 
 def _parse_identity(hostname: str) -> tuple[str | None, str, int] | None:
@@ -149,7 +213,10 @@ def _title_single(source: str, nodes: list[_Node]) -> str:
     if _has_leaf_mlag(nodes, parse_connections(source)):
         title += " (MLAG)"
     if mleafs:
-        title += f" + {mleafs} member"
+        title += f" + {mleafs} member{'s' if mleafs != 1 else ''}"
+    hosts = sum(1 for node in nodes if node.role == "host")
+    if hosts:
+        title += f" + {hosts} host{'s' if hosts != 1 else ''}"
     return title
 
 
@@ -185,7 +252,7 @@ def _fabric_mode(source: str, nodes: list[_Node]) -> str:
         mode = None
     if mode:
         return mode
-    return "l3ls" if any(node.role == "border" for node in nodes) else "l2"
+    return "l3ls" if any(node.role == "border" for node in nodes) else "l2ls"
 
 
 def _ip_label(node: _Node, *, multi: bool) -> str:
@@ -225,15 +292,76 @@ def _edge_style(left: _Node, right: _Node, *, multi_site: bool = False) -> str:
         return f' [style=dashed, color="{_BB_COLOR}", penwidth=2, constraint=false]'
     if "bb" in roles:
         return f' [color="{_BB_COLOR}", penwidth=1.5]'
+    if "host" in roles:
+        # constraint=false so dual-home uplinks cannot pull hosts beside leaves.
+        return f' [color="{_HOST_COLOR}", penwidth=1.2, constraint=false]'
     return ""
 
 
 def _ordered_pair(left: _Node, right: _Node) -> tuple[_Node, _Node]:
     """Prefer parent→child edge direction for Graphviz ranking."""
-    order = {"bb": 0, "border": 1, "spine": 2, "leaf": 3, "mleaf": 4}
+    order = {"bb": 0, "border": 1, "spine": 2, "leaf": 3, "mleaf": 4, "host": 5}
     if order.get(left.role, 9) <= order.get(right.role, 9):
         return left, right
     return right, left
+
+
+def _sorted_hosts(hosts: list[_Node]) -> list[_Node]:
+    return sorted(hosts, key=lambda item: (item.index, item.name))
+
+
+def _host_rows(hosts: list[_Node]) -> list[list[_Node]]:
+    ordered = _sorted_hosts(hosts)
+    return [
+        ordered[index : index + _HOSTS_PER_ROW]
+        for index in range(0, len(ordered), _HOSTS_PER_ROW)
+    ]
+
+
+def _lowest_fabric_nodes(nodes: list[_Node]) -> list[_Node]:
+    """Bottom switch tier used to pin host ranks below the fabric."""
+    for role in reversed(_FABRIC_ROLES):
+        group = [node for node in nodes if node.role == role]
+        if group:
+            return sorted(group, key=lambda item: (item.index, item.name))
+    return []
+
+
+def _append_host_ranks(
+    lines: list[str],
+    hosts: list[_Node],
+    *,
+    fabric_nodes: list[_Node],
+    multi: bool,
+    indent: str,
+) -> None:
+    """Place hosts in horizontal rows strictly below fabric switches."""
+    rows = _host_rows(hosts)
+    if not rows:
+        return
+    anchors = _lowest_fabric_nodes(fabric_nodes)
+    for row in rows:
+        lines.append(f"{indent}{{ rank=same;")
+        for node in row:
+            lines.append(_node_decl(node, multi=multi, indent=f"{indent}  "))
+        lines.append(f"{indent}}}")
+    # Invisible edges force hosts under the lowest switch tier, then stack rows.
+    if anchors:
+        lines.append(
+            f"{indent}{anchors[0].dot_id} -> {rows[0][0].dot_id} "
+            f"[style=invis, weight=100];"
+        )
+    for upper, lower in zip(rows, rows[1:]):
+        lines.append(
+            f"{indent}{upper[0].dot_id} -> {lower[0].dot_id} "
+            f"[style=invis, weight=100];"
+        )
+    # Keep hosts in a row left-to-right.
+    for row in rows:
+        if len(row) < 2:
+            continue
+        chain = " -> ".join(node.dot_id for node in row)
+        lines.append(f"{indent}{chain} [style=invis, weight=10];")
 
 
 def _dot_single(
@@ -254,9 +382,10 @@ def _dot_single(
         "  edge [dir=none, penwidth=1.2];",
         "",
     ]
+    fabric = [node for node in nodes if node.role != "host"]
     for role in ("spine", "leaf", "mleaf"):
         group = sorted(
-            (node for node in nodes if node.role == role),
+            (node for node in fabric if node.role == role),
             key=lambda item: item.index,
         )
         if not group:
@@ -265,6 +394,10 @@ def _dot_single(
         for node in group:
             lines.append(_node_decl(node, multi=False, indent="    "))
         lines.append("  }")
+    hosts = [node for node in nodes if node.role == "host"]
+    if hosts:
+        lines.append("")
+        _append_host_ranks(lines, hosts, fabric_nodes=fabric, multi=False, indent="  ")
     lines.append("")
     for conn in connections:
         left = by_name.get(conn.a_node)
@@ -319,11 +452,12 @@ def _dot_multi(
         )
         lines.append('    fontname="Helvetica-Bold"; fontsize=13; margin=12;')
         lines.append("")
+        site_fabric = [node for node in site_nodes if node.role != "host"]
         for role in ("border", "spine", "leaf", "mleaf"):
             if role == "border" and fabric != "l3ls":
                 continue
             group = sorted(
-                (node for node in site_nodes if node.role == role),
+                (node for node in site_fabric if node.role == role),
                 key=lambda item: item.index,
             )
             if not group:
@@ -332,6 +466,16 @@ def _dot_multi(
             for node in group:
                 lines.append(_node_decl(node, multi=True, indent="      "))
             lines.append("    }")
+        site_hosts = [node for node in site_nodes if node.role == "host"]
+        if site_hosts:
+            lines.append("")
+            _append_host_ranks(
+                lines,
+                site_hosts,
+                fabric_nodes=site_fabric,
+                multi=True,
+                indent="    ",
+            )
         lines.append("")
 
         for conn in connections:
@@ -348,6 +492,32 @@ def _dot_multi(
             lines.append(f"    {parent.dot_id} -> {child.dot_id}{style};")
         lines.append("  }")
         lines.append("")
+
+    unscoped_hosts = [
+        node for node in nodes if node.role == "host" and node.site is None
+    ]
+    if unscoped_hosts:
+        fabric_all = [node for node in nodes if node.role != "host"]
+        _append_host_ranks(
+            lines,
+            unscoped_hosts,
+            fabric_nodes=fabric_all,
+            multi=True,
+            indent="  ",
+        )
+        lines.append("")
+        for conn in connections:
+            left = by_name.get(conn.a_node)
+            right = by_name.get(conn.b_node)
+            if left is None or right is None:
+                continue
+            if left.role != "host" and right.role != "host":
+                continue
+            if left.site is not None and right.site is not None:
+                continue
+            parent, child = _ordered_pair(left, right)
+            style = _edge_style(parent, child, multi_site=True)
+            lines.append(f"  {parent.dot_id} -> {child.dot_id}{style};")
 
     for conn in connections:
         left = by_name.get(conn.a_node)

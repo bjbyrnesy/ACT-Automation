@@ -47,16 +47,16 @@ def test_validate_rejects_max_leaves_below_current():
         validate_create_capacity(cap)
 
 
-def test_validate_l2_rejects_spines_above_2():
+def test_validate_l2ls_rejects_spines_above_2():
     cap = Capacity(
-        fabric_mode="l2",
+        fabric_mode="l2ls",
         max_spines=3,
         max_leaves=4,
         max_mleafs_per_pair=0,
         spines=2,
         leaves=4,
     )
-    with pytest.raises(ValueError, match="L2"):
+    with pytest.raises(ValueError, match="L2LS"):
         validate_create_capacity(cap)
 
 

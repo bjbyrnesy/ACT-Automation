@@ -3,7 +3,8 @@
 import argparse
 import sys
 
-from .deploy import deploy
+from .deploy import deploy, redeploy
+from .destroy import destroy
 from .generate import generate
 from .onboard import onboard
 from .support import config_flag, config_image, config_ip_list, read_config
@@ -14,8 +15,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="acta.py clab",
         description=(
-            "Generate, deploy and onboard containerlab labs derived from ACT "
-            "topologies."
+            "Generate, deploy, destroy, redeploy, and onboard containerlab labs "
+            "derived from ACT topologies."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -85,7 +86,12 @@ def main(argv=None):
     )
     gen.set_defaults(func=generate)
     from_act_default = config_flag(config.get("CLAB_FROM_ACT"), default=False)
-    for command, handler in [("deploy", deploy), ("onboard", onboard)]:
+    for command, handler in (
+        ("deploy", deploy),
+        ("destroy", destroy),
+        ("redeploy", redeploy),
+        ("onboard", onboard),
+    ):
         action = sub.add_parser(command)
         action.add_argument(
             "topology",
@@ -99,11 +105,17 @@ def main(argv=None):
             default=config.get("CLAB_HOST") or None,
             help="SSH alias or user@host (default: CLAB_HOST from .config; omit to run locally)",
         )
+        runtime_default = (
+            "podman" if command in {"deploy", "destroy", "redeploy"} else None
+        )
         action.add_argument(
             "--runtime",
             choices=("docker", "podman"),
-            default="podman" if command == "deploy" else None,
-            help="Container runtime (deploy defaults to podman; onboarding auto-detects)",
+            default=runtime_default,
+            help=(
+                "Container runtime (deploy/destroy/redeploy default to podman; "
+                "onboarding auto-detects)"
+            ),
         )
         action.add_argument(
             "--from-act",
@@ -131,7 +143,7 @@ def main(argv=None):
             default=config_image(config),
             help="cEOS image when converting from ACT (default: CLAB_IMAGE / EOS_VERSION)",
         )
-        if command == "deploy":
+        if command in {"deploy", "redeploy"}:
             action.add_argument(
                 "--mgmt-network",
                 default=config.get("CLAB_MGMT_NETWORK") or None,

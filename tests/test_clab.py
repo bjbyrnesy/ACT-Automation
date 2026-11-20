@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from acta import clab
 
 clab_deploy = importlib.import_module("acta.clab.deploy")
+clab_destroy = importlib.import_module("acta.clab.destroy")
 clab_onboard = importlib.import_module("acta.clab.onboard")
 
 
@@ -576,7 +577,7 @@ class ContainerlabTests(unittest.TestCase):
                 eos_version="4.35.4M",
                 capacity=Capacity(
                     fabric_mode=fabric_mode,
-                    max_spines=2 if fabric_mode == "l2" else 4,
+                    max_spines=2 if fabric_mode == "l2ls" else 4,
                     max_leaves=8,
                     max_mleafs_per_pair=1,
                     spines=2,
@@ -592,14 +593,14 @@ class ContainerlabTests(unittest.TestCase):
         cases = [
             (_spec(None), "single", None),
             (_spec("l3ls", dc_count=2), "multi", "l3ls"),
-            (_spec("l2", dc_count=2), "multi-l2", "l2"),
+            (_spec("l2ls", dc_count=2), "multi-l2ls", "l2"),
         ]
         for spec, name, fabric in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as d:
                 source = Path(d) / "topology-demo.yml"
                 text = emit_act_yaml(spec)
                 source.write_text(text, encoding="utf-8")
-                if fabric == "l2":
+                if fabric == "l2ls":
                     self.assertNotIn("-border", text)
                     self.assertIn("-bb1:", text)
                     self.assertRegex(text, r"spine\d+:Ethernet\d+, demo-bb")
@@ -807,6 +808,38 @@ links:
                     archive.extractfile("configs/SN/a.eos").read(),
                     b"SERIALNUMBER=one\n",
                 )
+
+    def test_support_bundle_skips_linux_hosts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            (root / "configs/SN").mkdir(parents=True)
+            (root / "configs/base-config.eos").write_text("base")
+            (root / "configs/SN/a.eos").write_text("SERIALNUMBER=one\n")
+            lab = {
+                "topology": {
+                    "nodes": {
+                        "a": {
+                            "kind": "arista_ceos",
+                            "startup-config": "configs/base-config.eos",
+                            "binds": [
+                                "configs/SN/__clabNodeName__.eos:/mnt/flash/ceos-config:ro"
+                            ],
+                        },
+                        "blz2-host1": {
+                            "kind": "linux",
+                            "image": "ghcr.io/srl-labs/network-multitool:v0.10.0",
+                            "exec": ["lldpd"],
+                        },
+                    }
+                }
+            }
+            encoded = clab.support_bundle(root, lab)
+            with tarfile.open(
+                fileobj=io.BytesIO(base64.b64decode(encoded)), mode="r:gz"
+            ) as archive:
+                names = set(archive.getnames())
+            self.assertEqual(names, {"configs/base-config.eos", "configs/SN/a.eos"})
+            self.assertNotIn("configs/SN/blz2-host1.eos", names)
 
     def test_support_bundle_accepts_previously_generated_txt_identity(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1144,6 +1177,82 @@ links:
             )
             topology = Path(d) / ".act-automation/clab/demo/topology.clab.yml"
             self.assertEqual(topology.stat().st_mode & 0o777, 0o600)
+
+    def test_linux_jumphost_node_starts_lldpd(self):
+        node = clab.linux_jumphost_node("ghcr.io/srl-labs/network-multitool:v0.10.0")
+        self.assertEqual(node["kind"], "linux")
+        self.assertEqual(node["exec"], ["lldpd"])
+        # Must not override CMD — multitool entrypoint needs nginx (or sleep)
+        # to keep dropbear SSH alive.
+        self.assertNotIn("cmd", node)
+
+    def test_destroy_runs_containerlab_destroy(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(
+                clab.MARKER
+                + json.dumps(
+                    {
+                        "name": "demo",
+                        "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                    }
+                )
+            )
+            args = clab.argparse.Namespace(
+                topology=str(path), host=None, runtime="podman", from_act=False
+            )
+            with mock.patch.object(
+                clab_destroy,
+                "host_run",
+                return_value=subprocess.CompletedProcess([], 0, "ok\n", ""),
+            ) as run:
+                clab.destroy(args)
+            self.assertEqual(run.call_args.args[1], clab.DESTROY_SCRIPT)
+            self.assertEqual(run.call_args.args[2], ["demo", "podman", "0"])
+
+    def test_destroy_script_skips_when_missing_and_allowed(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"HOME": d}):
+                result = clab.host_run(
+                    None, clab.DESTROY_SCRIPT, ["missing-lab", "podman", "1"], ""
+                )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("skipping destroy", result.stdout)
+
+    def test_destroy_script_fails_when_missing_without_allow(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"HOME": d}):
+                result = clab.host_run(
+                    None, clab.DESTROY_SCRIPT, ["missing-lab", "podman", "0"], ""
+                )
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_redeploy_destroys_then_deploys(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(
+                clab.MARKER
+                + json.dumps(
+                    {
+                        "name": "demo",
+                        "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                    }
+                )
+            )
+            args = clab.argparse.Namespace(
+                topology=str(path),
+                host=None,
+                runtime="podman",
+                mgmt_network=None,
+                from_act=False,
+            )
+            with (
+                mock.patch.object(clab_deploy, "destroy") as destroy_mock,
+                mock.patch.object(clab_deploy, "deploy") as deploy_mock,
+            ):
+                clab.redeploy(args)
+            destroy_mock.assert_called_once_with(args, allow_missing=True)
+            deploy_mock.assert_called_once_with(args)
 
     def test_remote_host_command_keeps_payload_on_stdin(self):
         with mock.patch.object(

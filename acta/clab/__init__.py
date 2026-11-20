@@ -5,7 +5,8 @@ import getpass
 import subprocess
 
 from .cli import main
-from .deploy import deploy
+from .deploy import deploy, redeploy
+from .destroy import destroy
 from .generate import BASE_CONFIG, generate, management_settings, yaml_text
 from .layout import topology_layout, viewer_annotations
 from .onboard import (
@@ -19,7 +20,9 @@ from .support import (
     ANNOTATION_SCRIPT,
     CLI_ERROR,
     CONFIG_KEY,
+    DEFAULT_HOST_IMAGE,
     DEPLOY_SCRIPT,
+    DESTROY_SCRIPT,
     DOCKER_LIST_SCRIPT,
     DOCKER_SCRIPT,
     IMAGE,
@@ -38,6 +41,7 @@ from .support import (
     host_run,
     hostname_prefix_from_act,
     inventory_hostname,
+    linux_jumphost_node,
     mgmt_service_commands,
     parse_ipv4_list,
     read_config,
@@ -56,7 +60,9 @@ __all__ = [
     "BASE_CONFIG",
     "CLI_ERROR",
     "CONFIG_KEY",
+    "DEFAULT_HOST_IMAGE",
     "DEPLOY_SCRIPT",
+    "DESTROY_SCRIPT",
     "DOCKER_LIST_SCRIPT",
     "DOCKER_SCRIPT",
     "IMAGE",
@@ -74,6 +80,7 @@ __all__ = [
     "config_path",
     "container_name",
     "deploy",
+    "destroy",
     "enrollment_token",
     "fail",
     "generate",
@@ -81,6 +88,7 @@ __all__ = [
     "host_run",
     "hostname_prefix_from_act",
     "inventory_hostname",
+    "linux_jumphost_node",
     "main",
     "management_settings",
     "mgmt_service_commands",
@@ -89,6 +97,7 @@ __all__ = [
     "parse_ipv4_list",
     "read_config",
     "read_yaml",
+    "redeploy",
     "resolve_clab_lab_name",
     "resolve_topology_path",
     "short_node_name",

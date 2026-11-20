@@ -413,6 +413,70 @@ def _leaf_pairs(
     return sorted(pairs, key=lambda members: members[0][0])
 
 
+def leaf_mlag_pairs(
+    text: str,
+    *,
+    site: str | None = None,
+) -> list[tuple[str, str]]:
+    """Return discovered MLAG leaf pairs as ``(leaf_a, leaf_b)`` (1-based index order).
+
+    Same ordering as ``extend --pair N`` (sorted by lowest leaf index).
+    """
+    multi_prefix = _multi_dc_prefix(text)
+    if multi_prefix is not None and site is None:
+        # All sites: collect pairs per site in letter order.
+        pairs: list[tuple[str, str]] = []
+        for letter in _sites(text, multi_prefix):
+            leaves = _fabric_nodes(
+                text, "leaf", hostname_prefix=multi_prefix, site=letter
+            )
+            connections = parse_connections(text)
+            for odd, even in _leaf_pairs(connections, leaves):
+                pairs.append((odd[1], even[1]))
+        return pairs
+    prefix = multi_prefix if site is not None else None
+    leaves = _fabric_nodes(text, "leaf", hostname_prefix=prefix, site=site)
+    connections = parse_connections(text)
+    return [(odd[1], even[1]) for odd, even in _leaf_pairs(connections, leaves)]
+
+
+def member_leaves(text: str, *, site: str | None = None) -> list[str]:
+    """Return discovered member-leaf hostnames in 1-based ``--mleaf`` order.
+
+    Multi-DC: site letter order, then mleaf index within each site. Single-DC:
+    sorted by mleaf index.
+    """
+    multi_prefix = _multi_dc_prefix(text)
+    if multi_prefix is not None and site is None:
+        names: list[str] = []
+        for letter in _sites(text, multi_prefix):
+            names.extend(
+                name
+                for _, name, _ in _fabric_nodes(
+                    text, "mleaf", hostname_prefix=multi_prefix, site=letter
+                )
+            )
+        return names
+    prefix = multi_prefix if site is not None else None
+    return [
+        name
+        for _, name, _ in _fabric_nodes(
+            text, "mleaf", hostname_prefix=prefix, site=site
+        )
+    ]
+
+
+def member_leaf_parents(
+    text: str, mleaf: str
+) -> tuple[int | None, tuple[str, str] | None]:
+    """Return ``(mlag_pair_index, (leaf_a, leaf_b))`` for a member-leaf, if known."""
+    connections = parse_connections(text)
+    for index, (leaf_a, leaf_b) in enumerate(leaf_mlag_pairs(text), start=1):
+        if mleaf in _mleafs_for_pair(connections, leaf_a, leaf_b):
+            return index, (leaf_a, leaf_b)
+    return None, None
+
+
 @dataclass(frozen=True)
 class ExtendResult:
     """Outcome of an extend, for user-facing reporting (no warnings.warn)."""
@@ -634,11 +698,11 @@ def extend_topology(
 
     elif add == "spine":
         current_spines = max([base_spines, *(item[0] for item in spines)])
-        if capacity.fabric_mode == "l2" and current_spines >= 2:
-            raise ValueError("L2 fabrics cannot have more than 2 spines")
+        if capacity.fabric_mode in {"l2ls", "l2"} and current_spines >= 2:
+            raise ValueError("L2LS fabrics cannot have more than 2 spines")
         next_spine = max([base_spines, *(item[0] for item in spines)]) + 1
-        if capacity.fabric_mode == "l2" and next_spine + count - 1 > 2:
-            raise ValueError("L2 fabrics cannot have more than 2 spines")
+        if capacity.fabric_mode in {"l2ls", "l2"} and next_spine + count - 1 > 2:
+            raise ValueError("L2LS fabrics cannot have more than 2 spines")
         for spine_index in range(next_spine, next_spine + count):
             if spine_index > capacity.max_spines:
                 _warn_soft_capacity(

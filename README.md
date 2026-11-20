@@ -36,12 +36,41 @@ Optional: Graphviz `dot` — if installed, `create` and `extend` also write or r
 uv sync --extra dev
 uv run python acta.py act create
 uv run python acta.py act extend topology-….yml --add leaf
+uv run python acta.py show topology-….yml
+uv run python acta.py attach host demo-host1 topology-….yml --to demo-leaf1
+uv run python acta.py attach host demo-host2 topology-….yml --mlag-pair 1 --et 11
+uv run python acta.py attach host demo-host3 topology-….yml --mleaf 1
+uv run python acta.py ssh blz2-host1          # bash in multitool jumphost
+uv run python acta.py ssh A-leaf1             # EOS Cli on a switch
+uv run python acta.py ssh host1 -- uname -a   # one-shot command
 uv run python acta.py act upload topology-….yml
 uv run python acta.py act onboard
 uv run python acta.py clab generate …
 uv run python acta.py clab deploy …
+uv run python acta.py clab destroy …   # tear down a deployed lab
+uv run python acta.py clab redeploy …  # destroy (if present) + deploy
 uv run python acta.py clab onboard …
 ```
+
+### Hosts (after the fabric exists)
+
+Create builds the switch fabric first. Attach jumphosts afterward:
+
+- `acta.py show TOPOLOGY` — MLAG + member-leaf + attached-host tables, SSH
+  reachability (`admin@IP` when TCP/22 is open on mgmt), and Graphviz CLOS PNG
+  (inline in Kitty/Ghostty/WezTerm/iTerm2; `--plain` / `--no-ssh` / `--image`)
+- `acta.py attach host NAME TOPOLOGY --to SWITCH[:EthernetN]` — single-homed
+- `acta.py attach host NAME TOPOLOGY --mlag-pair N --et K` — dual-homed to an MLAG leaf pair
+- `acta.py attach host NAME TOPOLOGY --mleaf N` — single-homed to a member-leaf
+- `acta.py ssh NODE` — `podman`/`docker exec -it` into a running host (`bash`) or
+  switch (`Cli`); unique name fragments work (`host1`, `A-leaf1`)
+
+ACT gets a `generic` node (ubuntu by default); a sibling `.clab.yml` is synced to a
+`kind: linux` multitool container with the **same hostname**. Clab hosts keep the
+multitool default CMD (so dropbear SSH stays up), start `lldpd`, and get a
+static `mgmt-ipv4`. SSH: hosts `admin`/`multit00l`; cEOS `admin`/`admin`. Use
+case (`datacenter`|`campus`) controls attach policy (DC: no spines; campus:
+spines allowed with a warning). Fabric mode is separate (`l3ls`|`l2ls`).
 
 ### Capacity at create time
 
@@ -51,7 +80,7 @@ uv run python acta.py clab onboard …
 
 - **Soft max:** from the `# capacity:` header. Growth inside the plan uses reserved free ports (no warning). Growth past soft max is allowed with a warning; new links may use the next free Ethernet ≤16.
 - **Hard stop:** **16 Ethernet ports per switch**. Extend fails if it would need Ethernet17+.
-- **L2 spines:** hard-capped at **2** (not a soft max).
+- **L2LS spines:** hard-capped at **2** (not a soft max).
 - Existing `node:Ethernet` endpoints never change on extend. Missing or invalid capacity header → hard fail; recreate with `acta.py act create`.
 
 Run `uv run python acta.py act extend --help` for flags (`--add`, `--site`, `--pair`, `--count`, `--out`, `--new`).
@@ -139,17 +168,20 @@ uv run python acta.py clab generate topology-rclark-2026-09-15.yml --name rclark
 # uv run python acta.py clab generate topology-rclark-2026-09-15.yml --name rclark-lab --image ceos:4.35.4M --mgmt-subnet 10.40.0.0/23
 uv run python acta.py clab deploy rclark-lab.clab.yml
 uv run python acta.py clab onboard rclark-lab.clab.yml --endpoint apiserver.arista.io
+# After topology edits (attach/extend/…), rebuild the running lab:
+# uv run python acta.py clab redeploy rclark-lab.clab.yml
 ```
 
-Run the last two commands on the Linux lab host, or add `--host user@lab-host`
+Run deploy/destroy/redeploy/onboard on the Linux lab host, or add `--host user@lab-host`
 to run them over SSH. The initiating machine needs Python 3.15 and uv. The Linux host needs containerlab, Docker or Podman, and the specified
 cEOS image already loaded in the selected runtime or accessible to it. Remote access uses your SSH configuration
 and noninteractive authentication; the host must allow passwordless `sudo` for
 containerlab and access to the runtime or passwordless `sudo` for it.
-Use `--runtime docker` (the deployment default) or `--runtime podman` for
-deployment. Onboarding automatically finds the lab in accessible Docker and
+Use `--runtime docker` or `--runtime podman` (default **podman**) for
+deploy/destroy/redeploy. Onboarding automatically finds the lab in accessible Docker and
 rootless or rootful Podman stores; use `--runtime` to restrict the search.
-Deploy the topology before onboarding it.
+Deploy the topology before onboarding it. Topology mutations need
+`clab destroy` then `clab deploy`, or `clab redeploy` (destroy if present + deploy).
 Containerlab's default management network must have DNS and outbound access to
 the selected CVaaS endpoint on TCP 443.
 Newly generated cEOS nodes use the `MGMT` management VRF; onboarding directs
@@ -231,12 +263,13 @@ sudo chmod 644 /etc/ssh/ssh_config.d/clab-rclark-lab.conf
 This fixes an existing file; it does not change permissions on SSH private keys.
 
 Deployment saves the topology on the host at
-`~/.act-automation/clab/<lab-name>/topology.clab.yml`. To destroy the lab, run
-`sudo containerlab destroy --runtime docker -t ~/.act-automation/clab/<lab-name>/topology.clab.yml` (replace `docker` with `podman` if selected)
-on that host. Destroying the lab is separate from decommissioning its CVaaS
-devices. Re-run conversion with the same source identities and lab name to
-retain the same intended cEOS serials; changing the ACT serial prefix changes
-them. The generated serials are separate from ACT serials. The workflow sets
+`~/.act-automation/clab/<lab-name>/topology.clab.yml`. Destroy with
+`uv run python acta.py clab destroy <lab>.clab.yml` (same `--host` /
+`--runtime` as deploy), or rebuild in one step with `clab redeploy`.
+Destroying the lab is separate from decommissioning its CVaaS devices. Re-run
+conversion with the same source identities and lab name to retain the same
+intended cEOS serials; changing the ACT serial prefix changes them. The
+generated serials are separate from ACT serials. The workflow sets
 `CEOS_SERIAL_NUMBER` and binds a per-node `ceos-config` with a deterministic
 serial and system MAC. Verify the identity before and after redeployment on
 your host before relying on CVaaS identity continuity; older generated labs may
@@ -278,8 +311,25 @@ Use `uv run python acta.py clab --help` or `uv run python acta.py clab <command>
 | `TOPOLOGY` | Required generated containerlab topology file. |
 | `--host HOST` | SSH alias or `user@host` for the Linux lab host; omit to deploy locally. |
 | `--mgmt-network NAME` | Override the management network for this deployment; the local topology file is not changed. |
-| `--runtime docker\|podman` | Container runtime for deployment; defaults to Docker. |
+| `--runtime docker\|podman` | Container runtime for deployment; defaults to Podman. |
 | `-h`, `--help` | Show command help. |
+
+**Destroy:** `uv run python acta.py clab destroy TOPOLOGY [options]`
+
+| Argument | Description |
+| --- | --- |
+| `TOPOLOGY` | Required generated containerlab topology file (lab name from YAML). |
+| `--host HOST` | SSH alias or `user@host`; omit to destroy locally. |
+| `--runtime docker\|podman` | Container runtime; defaults to Podman. |
+| `-h`, `--help` | Show command help. |
+
+Fails if the lab was never deployed (no topology under
+`~/.act-automation/clab/<name>/`).
+
+**Redeploy:** `uv run python acta.py clab redeploy TOPOLOGY [options]`
+
+Destroy (skipped if nothing is deployed) then deploy. Same options as deploy
+(`--host`, `--runtime`, `--mgmt-network`, `--from-act`, …).
 
 **Onboard:** `uv run python acta.py clab onboard TOPOLOGY [options]`
 
@@ -349,8 +399,8 @@ No DHCP server. No ZTP. No bootstrap.py. No dedicated ztp-server node.
 
 | File | Purpose |
 | ---- | ------- |
-| `acta.py` | CLI entrypoint: `act` (create/extend/upload/onboard), `clab`. |
-| `acta/` | Python package (create/extend/upload/onboard + containerlab). |
+| `acta.py` | CLI entrypoint: `act`, `clab`, `show`, `attach`. |
+| `acta/` | Python package (create/extend/upload/onboard/attach/show + containerlab). |
 | `pyproject.toml` | Project metadata; Python ≥3.15; `uv sync --extra dev` for pytest/ruff/black. |
 | `topology-<prefix>-<YYYY-MM-DD>.yml` | Topology produced by `acta.py act create`. Filename must be unique across the ACT tenant. |
 | `.config` | Auto-generated cache of your answers (ACT/CVaaS + optional `CLAB_*`). **gitignored.** Delete to re-prompt. |

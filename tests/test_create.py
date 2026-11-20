@@ -49,6 +49,7 @@ def test_run_create_clamps_cached_member_leaf_default(
             "demo",
             "",
             "",  # sites (default 1)
+            "",  # use case (default datacenter)
             "",
             "",
             "",
@@ -88,6 +89,7 @@ def test_run_create_for_clab_writes_lab(
             "demo",
             "",
             "",  # sites
+            "",  # use case
             "",
             "",
             "",
@@ -127,6 +129,7 @@ def test_run_create_asks_sites_and_fabric_mode(
             "demo",
             "",
             "2",  # sites
+            "",  # use case (default datacenter)
             "l3ls",
             "",  # spines per site
             "",  # leaves per site
@@ -274,7 +277,7 @@ def _multi_dc_spec(fabric_mode: str, **kwargs) -> FabricSpec:
         eos_version="4.35.4M",
         capacity=Capacity(
             fabric_mode=fabric_mode,
-            max_spines=2 if fabric_mode == "l2" else 4,
+            max_spines=2 if fabric_mode == "l2ls" else 4,
             max_leaves=8,
             max_mleafs_per_pair=0,
             spines=2,
@@ -317,7 +320,7 @@ def test_multi_dc_l3ls_ports_follow_reserved_blocks():
 
 
 def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
-    text = emit_act_yaml(_multi_dc_spec("l2"))
+    text = emit_act_yaml(_multi_dc_spec("l2ls"))
     assert "border" not in text
     links = _endpoints(text)
     assert ("demo-A-spine1", 11, "demo-bb1", 1) in links

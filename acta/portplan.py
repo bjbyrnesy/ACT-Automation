@@ -73,7 +73,7 @@ class PortPlan:
         return site_index * self.capacity.max_spines + spine_index
 
     def bb_peer_port(self, dc_count: int) -> int:
-        if self.capacity.fabric_mode == "l2":
+        if self.capacity.fabric_mode in {"l2ls", "l2"}:
             return dc_count * self.capacity.max_spines + 1
         return 2 * dc_count + 1
 

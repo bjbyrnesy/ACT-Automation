@@ -231,6 +231,8 @@ def materialize_clab_from_act(source: Path, args) -> Path:
         source=str(source),
         name=name,
         image=image,
+        host_image=config.get("CLAB_HOST_IMAGE") or DEFAULT_HOST_IMAGE,
+        config=config,
         output=str(output),
         mgmt_subnet=config.get("CLAB_MGMT_SUBNET") or "172.100.100.0/22",
         mgmt_gateway=config.get("CLAB_MGMT_GATEWAY") or None,
@@ -267,8 +269,32 @@ def _optional_int(raw):
     return int(raw)
 
 
-def resolve_topology_path(path: Path, args) -> Path:
-    """Return a project clab lab path, auto-converting ACT YAML when enabled."""
+def resolve_existing_clab_sibling(path: Path, args) -> Path | None:
+    """Find an already-generated sibling ``.clab.yml`` for an ACT topology."""
+    path = Path(path)
+    candidates = [
+        path.with_name(f"{path.stem}.clab.yml"),
+        path.with_suffix(".clab.yml"),
+    ]
+    name = resolve_clab_lab_name(path, args)
+    candidates.append(path.with_name(f"{name}.clab.yml"))
+    seen: set[Path] = set()
+    for candidate in candidates:
+        key = candidate.resolve() if candidate.exists() else candidate
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.is_file() and is_project_clab_lab(candidate):
+            return candidate
+    return None
+
+
+def resolve_topology_path(path: Path, args, *, materialize: bool = True) -> Path:
+    """Return a project clab lab path, auto-converting ACT YAML when enabled.
+
+    When ``materialize`` is False (destroy), require an existing sibling
+    ``.clab.yml`` instead of regenerating and overwriting local edits.
+    """
     path = Path(path)
     if is_project_clab_lab(path):
         return path
@@ -281,6 +307,14 @@ def resolve_topology_path(path: Path, args) -> Path:
             fail(
                 f"{path} is not an ACT topology from acta.py act create; "
                 "cannot use --from-act / CLAB_FROM_ACT."
+            )
+        if not materialize:
+            existing = resolve_existing_clab_sibling(path, args)
+            if existing is not None:
+                return existing
+            fail(
+                f"No existing .clab.yml sibling for {path.name}; "
+                "run clab generate/deploy first (destroy will not regenerate)."
             )
         return materialize_clab_from_act(path, args)
     if is_act_topology(path):
@@ -310,9 +344,14 @@ def validate_lab(path):
             not isinstance(name_, str)
             or not NODE.fullmatch(name_)
             or not isinstance(node, dict)
-            or node.get("kind") != "arista_ceos"
         ):
-            fail("Invalid or non-cEOS node in generated lab.")
+            fail("Invalid node in generated lab.")
+        kind = node.get("kind")
+        if kind == "arista_ceos":
+            continue
+        if kind == "linux" and node.get("image"):
+            continue
+        fail("Invalid or unsupported node kind in generated lab.")
     return lab
 
 
@@ -382,11 +421,15 @@ def container_name(lab, node_name):
 
 def support_bundle(root, lab):
     nodes = lab["topology"]["nodes"]
-    if not any(node.get("startup-config") for node in nodes.values()):
+    # Only cEOS (startup-config) nodes need SN identity files — skip linux hosts.
+    ceos_nodes = {
+        name: node for name, node in nodes.items() if node.get("startup-config")
+    }
+    if not ceos_nodes:
         return None
     root = Path(root).resolve()
     paths = ["configs/base-config.eos"]
-    for name, node in nodes.items():
+    for name, node in ceos_nodes.items():
         binds = node.get("binds", [])
         legacy = "configs/SN/__clabNodeName__.txt:/mnt/flash/ceos-config:ro"
         extension = "txt" if legacy in binds else "eos"
@@ -435,6 +478,64 @@ while IFS= read -r source; do
 done < <(find "$tmp/configs" -type f -print)
 """
 
+DEFAULT_HOST_IMAGE = "ghcr.io/srl-labs/network-multitool:v0.10.0"
+# multitool ships lldpd; start it after boot so adjacent switches see LLDP.
+HOST_LLDP_EXEC = ("lldpd",)
+
+
+def linux_jumphost_node(
+    image: str | None = None, *, mgmt_ipv4: str | None = None
+) -> dict:
+    """Return a containerlab ``kind: linux`` jumphost with LLDP enabled.
+
+    Do not set ``cmd``: multitool's entrypoint starts dropbear SSH, then runs the
+    image CMD (nginx). Overriding CMD with ``bash`` exits immediately and kills
+    SSH with the container.
+    """
+    node = {
+        "kind": "linux",
+        "image": image or DEFAULT_HOST_IMAGE,
+        "exec": list(HOST_LLDP_EXEC),
+    }
+    if mgmt_ipv4:
+        node["mgmt-ipv4"] = mgmt_ipv4
+    return node
+
+
+def next_mgmt_ipv4(lab: dict) -> str | None:
+    """Return the next free IPv4 in ``lab['mgmt']['ipv4-subnet']``, if any."""
+    import ipaddress
+
+    mgmt = lab.get("mgmt") or {}
+    subnet_raw = mgmt.get("ipv4-subnet")
+    if not subnet_raw:
+        return None
+    try:
+        subnet = ipaddress.ip_network(subnet_raw, strict=False)
+    except ValueError:
+        return None
+    if subnet.version != 4:
+        return None
+    used: set[str] = set()
+    gateway = mgmt.get("ipv4-gw")
+    if gateway:
+        used.add(str(gateway).split("/", 1)[0])
+    nodes = (lab.get("topology") or {}).get("nodes") or {}
+    for node in nodes.values():
+        if not isinstance(node, dict):
+            continue
+        address = node.get("mgmt-ipv4")
+        if address:
+            used.add(str(address).split("/", 1)[0])
+    gateway_ip = subnet.network_address + 1
+    used.add(str(gateway_ip))
+    for candidate in subnet.hosts():
+        text = str(candidate)
+        if text not in used:
+            return text
+    return None
+
+
 ANNOTATION_SCRIPT = r"""set -eu
 name=$1
 dir="$HOME/.act-automation/clab/$name"
@@ -466,6 +567,36 @@ elif command -v podman >/dev/null 2>&1 \
   # macOS: no darwin containerlab binary; run inside the Podman VM.
   # The Mac home directory is bind-mounted, so $topo is visible there.
   podman machine ssh -- sudo containerlab deploy -t "$topo" --runtime "$runtime"
+else
+  echo "containerlab not found on PATH or in the Podman machine." >&2
+  echo "Install it on Linux, or ensure 'podman machine ssh' can reach containerlab." >&2
+  exit 1
+fi
+"""
+
+DESTROY_SCRIPT = r"""set -eu
+name=$1
+runtime=${2:-podman}
+allow_missing=${3:-0}
+dir="$HOME/.act-automation/clab/$name"
+topo="$dir/topology.clab.yml"
+if [ ! -f "$topo" ]; then
+  if [ "$allow_missing" = "1" ]; then
+    echo "No lab topology at $topo; skipping destroy."
+    exit 0
+  fi
+  echo "No lab topology at $topo (deploy once before destroy)." >&2
+  exit 1
+fi
+if command -v containerlab >/dev/null 2>&1; then
+  if [ "$(id -u)" -eq 0 ]; then
+    containerlab destroy -t "$topo" --runtime "$runtime"
+  else
+    sudo -n containerlab destroy -t "$topo" --runtime "$runtime"
+  fi
+elif command -v podman >/dev/null 2>&1 \
+  && podman machine ssh -- command -v containerlab >/dev/null 2>&1; then
+  podman machine ssh -- sudo containerlab destroy -t "$topo" --runtime "$runtime"
 else
   echo "containerlab not found on PATH or in the Podman machine." >&2
   echo "Install it on Linux, or ensure 'podman machine ssh' can reach containerlab." >&2

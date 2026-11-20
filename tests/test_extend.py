@@ -183,7 +183,7 @@ def test_l2_rejects_third_spine(tmp_path: Path):
         serial_prefix="demo",
         eos_version="4.35.4M",
         capacity=Capacity(
-            fabric_mode="l2",
+            fabric_mode="l2ls",
             max_spines=2,
             max_leaves=8,
             max_mleafs_per_pair=0,
@@ -198,7 +198,7 @@ def test_l2_rejects_third_spine(tmp_path: Path):
     path = tmp_path / "topology-l2.yml"
     path.write_text(emit_act_yaml(spec))
 
-    with pytest.raises(ValueError, match="L2"):
+    with pytest.raises(ValueError, match="L2LS"):
         extend_topology(path, add="spine")
 
 
@@ -292,7 +292,7 @@ def _write_multi_dc(tmp_path: Path, fabric_mode: str = "l3ls") -> Path:
         eos_version="4.35.4M",
         capacity=Capacity(
             fabric_mode=fabric_mode,
-            max_spines=2 if fabric_mode == "l2" else 4,
+            max_spines=2 if fabric_mode == "l2ls" else 4,
             max_leaves=8,
             max_mleafs_per_pair=2,
             spines=2,
@@ -381,8 +381,8 @@ def test_multi_dc_l3ls_spine_links_to_borders(tmp_path: Path):
 
 
 def test_multi_dc_l2_spine_limit_is_per_site(tmp_path: Path):
-    path = _write_multi_dc(tmp_path, "l2")
-    with pytest.raises(ValueError, match="L2"):
+    path = _write_multi_dc(tmp_path, "l2ls")
+    with pytest.raises(ValueError, match="L2LS"):
         extend_topology(path, add="spine", site="B")
 
 

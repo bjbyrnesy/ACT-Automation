@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from acta.attach import attach_host_act
 from acta.capacity import Capacity
 from acta.create import FabricSpec, emit_act_yaml
 from acta.diagram import topology_to_dot, write_png
@@ -36,7 +37,7 @@ def _multi(fabric_mode: str = "l3ls") -> str:
             eos_version="4.35.4M",
             capacity=Capacity(
                 fabric_mode=fabric_mode,
-                max_spines=2 if fabric_mode == "l2" else 4,
+                max_spines=2 if fabric_mode == "l2ls" else 4,
                 max_leaves=8,
                 max_mleafs_per_pair=0,
                 spines=2,
@@ -80,3 +81,66 @@ def test_write_png_renders_with_graphviz(tmp_path: Path):
     assert write_png(topology_to_dot(_single()), png) is True
     assert png.is_file()
     assert png.stat().st_size > 1000
+
+
+def test_dot_includes_attached_hosts(tmp_path: Path):
+    path = tmp_path / "topology-demo.yml"
+    path.write_text(_single(), encoding="utf-8")
+    attach_host_act(
+        path,
+        "jumpbox",
+        mlag_pair=1,
+        et=11,
+        sync_sibling=False,
+    )
+    text = path.read_text(encoding="utf-8")
+    dot = topology_to_dot(text)
+    assert "jumpbox" in dot
+    assert 'fillcolor="#cffafe"' in dot
+    assert " + 1 host" in dot
+    assert "constraint=false" in dot
+    assert "mleaf1 -> jumpbox [style=invis" in dot
+    assert "leaf1 -> jumpbox" in dot
+    assert "leaf2 -> jumpbox" in dot
+    # Host rank block is emitted after the mleaf fabric rank.
+    mleaf_rank = dot.find("mleaf1 [label=")
+    host_rank = dot.find("jumpbox [label=")
+    assert mleaf_rank != -1 and host_rank != -1 and host_rank > mleaf_rank
+
+
+def test_multi_dot_places_host_in_site_cluster(tmp_path: Path):
+    path = tmp_path / "topology-multi.yml"
+    path.write_text(_multi("l3ls"), encoding="utf-8")
+    attach_host_act(
+        path,
+        "demo-host1",
+        to=["demo-A-leaf1:Ethernet10"],
+        sync_sibling=False,
+    )
+    dot = topology_to_dot(path.read_text(encoding="utf-8"))
+    assert "demo-host1" in dot
+    # Host node and its uplink should land inside Site A, not a free-floating max rank.
+    site_a = dot.split("subgraph cluster_A")[1].split("subgraph cluster_B")[0]
+    assert "demo_host1" in site_a or "demo-host1" in site_a
+    assert "A_leaf1 -> demo_host1" in site_a
+    assert "constraint=false" in site_a
+    assert "style=invis" in site_a
+
+
+def test_hosts_wrap_into_multiple_rows(tmp_path: Path):
+    path = tmp_path / "topology-demo.yml"
+    path.write_text(_single(), encoding="utf-8")
+    for index in range(1, 8):
+        leaf = f"demo-leaf{(index % 4) + 1}"
+        attach_host_act(
+            path,
+            f"h{index}",
+            to=[leaf],
+            sync_sibling=False,
+        )
+    from acta.diagram import _HOSTS_PER_ROW, topology_to_dot
+
+    dot = topology_to_dot(path.read_text(encoding="utf-8"))
+    assert _HOSTS_PER_ROW == 6
+    assert "h1 -> h2 -> h3 -> h4 -> h5 -> h6 [style=invis" in dot
+    assert "h1 -> h7 [style=invis" in dot

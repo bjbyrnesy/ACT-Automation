@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+from .destroy import destroy
 from .generate import yaml_text
 from .support import (
     ANNOTATION_SCRIPT,
@@ -56,3 +57,9 @@ def deploy(args):
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
     print(f"Deployed {lab['name']}.")
+
+
+def redeploy(args):
+    """Destroy an existing lab (if present), then deploy the topology again."""
+    destroy(args, allow_missing=True)
+    deploy(args)

@@ -52,8 +52,9 @@ def _validate_spec(spec: FabricSpec) -> None:
     validate_create_capacity(spec.capacity)
     if not 1 <= spec.dc_count <= MAX_DC:
         raise ValueError(f"dc_count must be between 1 and {MAX_DC}")
-    if spec.dc_count > 1 and spec.capacity.fabric_mode not in {"l3ls", "l2"}:
-        raise ValueError("multi-DC fabrics require fabric_mode l3ls or l2")
+    mode = spec.capacity.fabric_mode
+    if spec.dc_count > 1 and mode not in {"l3ls", "l2ls", "l2"}:
+        raise ValueError("multi-DC fabrics require fabric_mode l3ls or l2ls")
     if spec.spine_mlag and spec.capacity.spines != 2:
         raise ValueError("spine MLAG requires exactly two spines")
     if spec.member_leaf_pairs and not spec.mlag_pairs:
@@ -336,8 +337,8 @@ def _backbone_link_lines(spec: FabricSpec, plan: PortPlan) -> list[str]:
     """Emit site <-> backbone links and the bb1/bb2 peer link."""
     prefix = spec.hostname_prefix
     lines: list[str] = []
-    if spec.capacity.fabric_mode == "l2":
-        lines.extend(["", "  # Backbone — spine <-> backbone (l2)"])
+    if spec.capacity.fabric_mode in {"l2ls", "l2"}:
+        lines.extend(["", "  # Backbone — spine <-> backbone (l2ls)"])
         for site_index in range(spec.dc_count):
             site = site_letter(site_index)
             for spine in range(1, spec.capacity.spines + 1):
@@ -495,23 +496,44 @@ def _configured_int(config: dict[str, str], key: str, default: int) -> int:
 
 
 def _normalize_fabric_mode(value: str) -> str:
-    """Map generate.sh fabric-mode aliases to ``l3ls`` or ``l2``."""
-    folded = value.strip().casefold()
-    if folded in {"l3ls", "l3"}:
-        return "l3ls"
-    if folded in {"l2", "campus"}:
-        return "l2"
-    raise ValueError("fabric mode must be l3ls or l2")
+    """Map fabric-mode aliases to ``l3ls`` or ``l2ls``."""
+    from acta.capacity import normalize_fabric_mode
+
+    mode = normalize_fabric_mode(value)
+    if mode is None:
+        raise ValueError("fabric mode must be l3ls or l2ls")
+    return mode
+
+
+def _normalize_use_case(value: str) -> str:
+    from acta.capacity import normalize_use_case
+
+    case = normalize_use_case(value)
+    if case is None:
+        raise ValueError("use case must be datacenter or campus")
+    return case
 
 
 def _prompt_fabric_mode(default: str) -> str:
     while True:
         answer = prompt_value(
-            "Fabric mode (l3ls=border leaves, l2=spine uplinks)",
+            "Fabric mode (l3ls=border leaves, l2ls=spine uplinks)",
             default,
         )
         try:
             return _normalize_fabric_mode(answer)
+        except ValueError as error:
+            print(f"  {error}.", file=sys.stderr)
+
+
+def _prompt_use_case(default: str) -> str:
+    while True:
+        answer = prompt_value(
+            "Use case (datacenter|campus)",
+            default,
+        )
+        try:
+            return _normalize_use_case(answer)
         except ValueError as error:
             print(f"  {error}.", file=sys.stderr)
 
@@ -556,6 +578,13 @@ def run_create(
         maximum=MAX_DC,
     )
     multi_dc = dc_count > 1
+    cached_use = config.get("USE_CASE") or "datacenter"
+    try:
+        cached_use = _normalize_use_case(cached_use)
+    except ValueError:
+        cached_use = "datacenter"
+    use_case = _prompt_use_case(cached_use)
+
     fabric_mode: str | None = None
     if multi_dc:
         cached_mode = config.get("FABRIC_MODE") or "l3ls"
@@ -569,7 +598,7 @@ def run_create(
     leaf_label = "Leaves per site" if multi_dc else "Number of leaves"
     spine_ceiling = address_limit("spine", multi_dc)
     leaf_ceiling = address_limit("leaf", multi_dc)
-    if fabric_mode == "l2":
+    if fabric_mode in {"l2ls", "l2"}:
         spine_ceiling = min(spine_ceiling, 2)
 
     while True:
@@ -585,8 +614,8 @@ def run_create(
         )
         try:
             validate_current_capacity(spines, leaves)
-            if fabric_mode == "l2" and spines > 2:
-                raise ValueError("L2 fabric spines hard-capped at 2")
+            if fabric_mode in {"l2ls", "l2"} and spines > 2:
+                raise ValueError("L2LS fabric spines hard-capped at 2")
             break
         except ValueError as error:
             print(f"  {error}; choose smaller current counts", file=sys.stderr)
@@ -594,7 +623,7 @@ def run_create(
     print()
     print(capacity_banner())
     max_spine_ceiling = min(HARD_PORT_MAX, MAX_ADDRESS_SPINES, spine_ceiling)
-    if fabric_mode == "l2":
+    if fabric_mode in {"l2ls", "l2"}:
         max_spine_ceiling = min(max_spine_ceiling, 2)
     max_leaf_ceiling = min(HARD_PORT_MAX, leaf_ceiling)
     while True:
@@ -631,6 +660,7 @@ def run_create(
             max_mleafs_per_pair=max_mleafs_per_pair,
             spines=spines,
             leaves=leaves,
+            use_case=use_case,
         )
         try:
             validate_create_capacity(capacity)
@@ -727,6 +757,7 @@ def run_create(
                 str(member_leaves_per_pair) if member_leaf_pairs else ""
             ),
             "FABRIC_MODE": fabric_mode or "",
+            "USE_CASE": use_case,
             "MAX_SPINES": str(max_spines),
             "MAX_LEAVES": str(max_leaves),
             "MAX_MLEAFS_PER_PAIR": str(max_mleafs_per_pair),

@@ -14,8 +14,10 @@ def test_acta_help_lists_platform_namespaces():
     )
     assert proc.returncode == 0
     out = proc.stdout
-    assert "{act,clab}" in out or ("act" in out and "clab" in out)
-    # Top-level verbs must not remain as peer commands of act/clab.
+    assert "act" in out and "clab" in out
+    assert "show" in out and "attach" in out
+    assert "ssh" in out
+    # Top-level ACT verbs must not remain as peer commands of act/clab.
     usage = out.splitlines()[0]
     assert "create" not in usage
     assert "upload" not in usage
@@ -90,7 +92,7 @@ def test_clab_help_lists_subcommands():
     )
     assert proc.returncode == 0
     out = proc.stdout
-    for name in ("generate", "deploy", "onboard"):
+    for name in ("generate", "deploy", "destroy", "redeploy", "onboard"):
         assert name in out
 
 

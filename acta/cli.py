@@ -29,10 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="acta.py",
         description=(
-            "ACT Automation — equal platform namespaces: "
-            "acta.py act … (ACT) and acta.py clab … (containerlab). "
+            "ACT Automation — acta.py act … / clab … plus show, attach, and ssh. "
             "Capacity reserved at create time; extend only uses unused ports "
-            "(existing endpoints stay fixed)."
+            "(existing endpoints stay fixed). Attach hosts after the fabric exists."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -163,6 +162,83 @@ def build_parser() -> argparse.ArgumentParser:
     clab_sub.add_parser("generate", help="Convert ACT topology YAML to containerlab")
     clab_sub.add_parser("deploy", help="Deploy a .clab.yml locally or via --host")
     clab_sub.add_parser("onboard", help="Onboard cEOS containers to CVaaS")
+
+    show = sub.add_parser(
+        "show",
+        help="Show fabric summary, MLAG pairs, and Graphviz PNG (inline when supported)",
+    )
+    show.add_argument("topology", type=Path, help="ACT topology YAML")
+    show_view = show.add_mutually_exclusive_group()
+    show_view.add_argument(
+        "--image",
+        action="store_true",
+        help="Force Kitty-graphics inline PNG even if auto-detect is unsure",
+    )
+    show_view.add_argument(
+        "--plain",
+        action="store_true",
+        help="Skip inline image (tables + PNG path only; default when not a TTY)",
+    )
+    show.add_argument(
+        "--no-ssh",
+        action="store_true",
+        help="Skip SSH reachability probes of management IPs",
+    )
+
+    ssh = sub.add_parser(
+        "ssh",
+        help="Shell into a running lab node (podman/docker exec; host or switch)",
+    )
+    ssh.add_argument(
+        "node",
+        help="Container/node name or unique fragment (e.g. blz2-host1, A-leaf1, host1)",
+    )
+    ssh.add_argument(
+        "--runtime",
+        choices=("podman", "docker"),
+        default=None,
+        help="Container runtime (default: podman if available, else docker)",
+    )
+    ssh.add_argument(
+        "remote_command",
+        nargs="*",
+        default=[],
+        help="Optional command (use -- before flags that look like options)",
+    )
+
+    attach = sub.add_parser(
+        "attach",
+        help="Attach a host (generic/linux) to a named switch after the fabric exists",
+    )
+    attach.add_argument(
+        "object_type",
+        choices=("host",),
+        help="Object to attach (v1: host)",
+    )
+    attach.add_argument("name", help="Host hostname (same in ACT and clab)")
+    attach.add_argument("topology", type=Path, help="ACT topology YAML or .clab.yml")
+    attach.add_argument(
+        "--to",
+        action="append",
+        default=[],
+        metavar="SWITCH[:EthernetN]",
+        help="Switch endpoint (repeat twice for dual-homed). Port optional.",
+    )
+    attach.add_argument(
+        "--mlag-pair",
+        type=int,
+        help="1-based MLAG leaf pair index from acta.py show",
+    )
+    attach.add_argument(
+        "--mleaf",
+        type=int,
+        help="1-based member-leaf index from acta.py show",
+    )
+    attach.add_argument(
+        "--et",
+        type=int,
+        help="Ethernet port on the switch (MLAG peers or --mleaf target)",
+    )
     return parser
 
 
@@ -428,6 +504,40 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(raw)
     try:
+        if args.command == "show":
+            from acta.show_topo import run_show
+
+            return run_show(
+                args.topology,
+                plain=args.plain,
+                force_image=args.image,
+                skip_probe=args.no_ssh,
+            )
+        if args.command == "ssh":
+            from acta.ssh_node import run_ssh
+
+            remote = list(args.remote_command or [])
+            if remote and remote[0] == "--":
+                remote = remote[1:]
+            return run_ssh(
+                args.node,
+                runtime=args.runtime,
+                command=remote or None,
+            )
+        if args.command == "attach":
+            from acta.attach import run_attach
+
+            run_attach(
+                args.object_type,
+                args.name,
+                args.topology,
+                to=args.to,
+                mlag_pair=args.mlag_pair,
+                mleaf=args.mleaf,
+                et=args.et,
+                project_dir=Path.cwd(),
+            )
+            return 0
         if args.command == "act":
             if args.act_command == "create":
                 run_create(
@@ -451,9 +561,11 @@ def main(argv: list[str] | None = None) -> int:
     except (
         EOFError,
         FileNotFoundError,
+        LookupError,
         NotImplementedError,
         OSError,
         RuntimeError,
+        TypeError,
         ValueError,
     ) as error:
         print(f"ERROR: {error}", file=sys.stderr, flush=True)

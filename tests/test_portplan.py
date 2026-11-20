@@ -55,7 +55,7 @@ def test_multi_dc_uplinks_sit_after_reserved_blocks():
 
 
 def test_l2_backbone_ports_use_reserved_spine_width():
-    plan = PortPlan(_cap(fabric_mode="l2", max_spines=2))
+    plan = PortPlan(_cap(fabric_mode="l2ls", max_spines=2))
     assert plan.bb_spine_port(1, 1) == 3
     assert plan.bb_peer_port(3) == 7
 
