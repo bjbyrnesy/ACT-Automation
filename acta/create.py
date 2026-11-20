@@ -700,8 +700,9 @@ def run_create(project_dir: Path) -> Path:
     print(f"Wrote {output_path.name}")
     if diagram_written:
         print(f"Wrote {diagram_path.name}")
-    print(
-        f"Next: acta.py upload to send {output_path.name} to ACT, "
-        f"or acta.py extend {output_path.name} --add leaf to grow it later."
-    )
+    name = output_path.name
+    print("Next:")
+    print(f"  ACT:          acta.py upload {name}")
+    print(f"  containerlab: acta.py clab generate {name} --name <lab> --image <ceos>")
+    print(f"  grow later:   acta.py extend {name} --add leaf")
     return output_path

@@ -75,6 +75,7 @@ def test_run_create_clamps_cached_member_leaf_default(
     assert create.load_config(tmp_path / ".config")["DC_COUNT"] == "1"
     out = capsys.readouterr().out
     assert "acta.py upload" in out
+    assert "acta.py clab generate" in out
     assert f"acta.py extend {output_path.name} --add leaf" in out
 
 
