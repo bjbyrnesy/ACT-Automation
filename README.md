@@ -305,9 +305,9 @@ Topologies set `legacy_eos_versioning: false` so CVaaS can drive EOS upgrades in
 **Local:** pre-commit (Gitleaks on commit; full scan on push; block `.config`/`.env`;
 Black/Ruff).
 
-**GitHub Actions:** same pre-commit suite + pytest; Gitleaks, CodeQL, zizmor, Trivy;
-Dependabot for Actions/pip. Native Secret scanning / Dependency graph need a repo
-**owner**; collaborators are covered by pre-commit + Actions Gitleaks.
+**GitHub Actions:** same pre-commit suite + pytest; Gitleaks, zizmor, Trivy;
+Dependabot for Actions/pip. CodeQL / native Secret scanning need a repo
+**owner** and are not run in CI; collaborators are covered by pre-commit + Gitleaks.
 
 ## TODO
 
