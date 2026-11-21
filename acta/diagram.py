@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from acta.capacity import parse_capacity_header
+from acta.site_names import (
+    dot_safe_id,
+    hostname_prefix_of,
+    parse_fabric_identity,
+)
 from acta.topology import Connection, parse_connections
 
 _NODE_BLOCK_RE = re.compile(
@@ -114,7 +119,7 @@ def _parse_nodes(topology_source: str) -> list[_Node]:
         elif site is None:
             dot_id = f"{role}{index}"
         else:
-            dot_id = f"{site}_{role}{index}"
+            dot_id = f"{dot_safe_id(site)}_{role}{index}"
         nodes.append(
             _Node(
                 name=name,
@@ -172,30 +177,11 @@ def _with_host_sites(nodes: list[_Node], connections: list[Connection]) -> list[
 
 def _parse_identity(hostname: str) -> tuple[str | None, str, int] | None:
     """Return ``(site|None, role, index)`` from an ACT hostname."""
-    multi = re.search(
-        r"-(?P<site>[A-D])-(?P<role>border|spine|leaf|mleaf)(?P<index>\d+)$",
-        hostname,
-    )
-    if multi:
-        return multi.group("site"), multi.group("role"), int(multi.group("index"))
-    bb = re.search(r"-bb(?P<index>\d+)$", hostname)
-    if bb:
-        return None, "bb", int(bb.group("index"))
-    single = re.search(
-        r"-(?P<role>border|spine|leaf|mleaf)(?P<index>\d+)$",
-        hostname,
-    )
-    if single:
-        return None, single.group("role"), int(single.group("index"))
-    return None
+    return parse_fabric_identity(hostname)
 
 
 def _host_prefix(nodes: list[_Node]) -> str:
-    sample = nodes[0].name
-    multi = re.sub(r"-[A-D]-(?:border|spine|leaf|mleaf)\d+$", "", sample)
-    if multi != sample:
-        return multi
-    return re.sub(r"-(?:bb|border|spine|leaf|mleaf)\d+$", "", sample)
+    return hostname_prefix_of(nodes[0].name)
 
 
 def _serial_prefix(source: str, nodes: list[_Node]) -> str:
@@ -447,7 +433,7 @@ def _dot_multi(
     sites = sorted({node.site for node in nodes if node.site})
     for site in sites:
         site_nodes = [node for node in nodes if node.site == site]
-        lines.append(f"  subgraph cluster_{site} {{")
+        lines.append(f"  subgraph cluster_{dot_safe_id(site)} {{")
         lines.append(
             f'    label="Site {site}"; style="rounded,dashed"; color="#6b7280";'
         )

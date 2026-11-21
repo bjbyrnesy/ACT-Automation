@@ -165,7 +165,7 @@ def is_act_topology(path: Path) -> bool:
 
 _ACT_NODE_NAME_RE = re.compile(r"^  - (?P<name>[^:\n]+):", re.MULTILINE)
 _ACT_ROLE_SUFFIX_RE = re.compile(
-    r"^(.+?)-(?:[A-D]-)?(?:border|spine|leaf|mleaf|bb)\d+$",
+    r"^(.+?)-(?:[A-Za-z0-9][A-Za-z0-9_-]*-)?" r"(?:border|spine|leaf|mleaf|bb)\d+$",
     re.IGNORECASE,
 )
 _DATE_SUFFIX_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")

@@ -1,6 +1,6 @@
 """Containerlab Topology Viewer layout and annotations."""
 
-import re
+from acta.site_names import parse_fabric_identity
 
 
 def topology_layout(names, links=()):
@@ -8,14 +8,12 @@ def topology_layout(names, links=()):
     rows = {"bb": 0, "border": 180, "spine": 360, "leaf": 540, "mleaf": 720}
     groups, roles = {}, {}
     for name in names:
-        match = re.search(
-            r"(?:^|-)(?:([A-D])-)?(bb|border|spine|leaf|mleaf)([0-9]+)$", name
-        )
-        if not match:
+        parsed = parse_fabric_identity(name)
+        if parsed is None:
             continue
-        site, role, number = match.groups()
+        site, role, number = parsed
         group = "core" if role == "bb" else f"site {site or 'A'}"
-        groups.setdefault(group, {}).setdefault(role, []).append((int(number), name))
+        groups.setdefault(group, {}).setdefault(role, []).append((number, name))
         roles[name] = (group, role)
 
     parents = {}
