@@ -1,7 +1,7 @@
 import pytest
 
 from acta.capacity import Capacity
-from acta.portplan import PortPlan, site_ordinal
+from acta.portplan import PortPlan, persisted_site_ordinal, site_ordinal
 
 
 def _cap(**kwargs) -> Capacity:
@@ -70,6 +70,23 @@ def test_site_ordinal_is_sorted_name_order():
     assert site_ordinal("ord", sites) == 2
     assert PortPlan(_cap()).bb_border_port(site_ordinal("aus", sites), 1) == 1
     assert PortPlan(_cap()).bb_border_port(site_ordinal("ord", sites), 2) == 6
+
+
+def test_persisted_site_ordinal_survives_earlier_sorting_name():
+    text = """nodes:
+  - demo-dfw-spine1:
+      ip_addr: 192.168.0.8/24
+  - demo-ord-spine1:
+      ip_addr: 192.168.0.38/24
+  - demo-aus-spine1:
+      ip_addr: 192.168.0.68/24
+"""
+    sites = ("dfw", "ord", "aus")
+    assert site_ordinal("ord", sites) == 2  # sorted order would slide it
+    assert persisted_site_ordinal(text, "demo", "ord") == 1
+    assert persisted_site_ordinal(text, "demo", "aus") == 2
+    plan = PortPlan(_cap())
+    assert plan.bb_border_port(persisted_site_ordinal(text, "demo", "ord"), 1) == 3
 
 
 def test_bb_ports_cover_eight_sites_without_peer_collision():
