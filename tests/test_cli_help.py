@@ -17,6 +17,7 @@ def test_acta_help_lists_platform_namespaces():
     assert "act" in out and "clab" in out
     assert "show" in out and "attach" in out
     assert "ssh" in out
+    assert "serve" in out
     # Top-level ACT verbs must not remain as peer commands of act/clab.
     usage = out.splitlines()[0]
     assert "create" not in usage
