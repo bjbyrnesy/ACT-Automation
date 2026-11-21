@@ -67,3 +67,22 @@ def preview_from_spec(spec: FabricSpec) -> PreviewResult:
         png_base64=base64.b64encode(png).decode("ascii") if png else None,
         summary=summary,
     )
+
+
+def preview_from_yaml(yaml_text: str) -> PreviewResult:
+    """Render PNG (and summary) for existing ACT YAML text."""
+    if not yaml_text.strip():
+        raise WebError(400, "yaml_text is required")
+    png = png_bytes_from_yaml(yaml_text)
+    mode_match = _MODE_RE.search(yaml_text)
+    summary: dict[str, Any] = {
+        "node_count": _count_nodes(yaml_text),
+        "fabric_mode": mode_match.group(1) if mode_match else None,
+        "sites": [],
+        "title": None,
+    }
+    return PreviewResult(
+        yaml_text=yaml_text,
+        png_base64=base64.b64encode(png).decode("ascii") if png else None,
+        summary=summary,
+    )

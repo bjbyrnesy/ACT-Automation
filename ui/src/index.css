@@ -46,4 +46,138 @@ a {
 button {
   font: inherit;
   color: inherit;
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.page-error {
+  color: #f5a8a8;
+}
+
+.page-status {
+  color: #9ec1ff;
+}
+
+.labs-toolbar {
+  margin: 8px 0;
+}
+
+.labs-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.labs-table th,
+.labs-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.show-actions {
+  margin: 8px 0;
+}
+
+.show-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+  min-height: 280px;
+}
+
+.show-panes section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.show-panes__label {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.show-panes__mono {
+  margin: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+}
+
+.show-panes__diagram {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  color: var(--text-muted);
+}
+
+.show-panes__diagram img,
+.two-pane__diagram-body img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 520px;
+  margin-top: 10px;
+}
+
+.settings-form fieldset {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.settings-form legend {
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
+.settings-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-form input[type="text"],
+.settings-form input[type="number"],
+.settings-form input:not([type]) {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.settings-form__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
