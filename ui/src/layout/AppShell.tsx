@@ -1,10 +1,12 @@
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
+import { TopologyPane } from "../components/TopologyPane";
 import { LeftNav } from "./LeftNav";
 import { TopBar } from "./TopBar";
 import { TwoPane } from "./TwoPane";
 import "./AppShell.css";
 
 export function AppShell() {
+  const location = useLocation();
   return (
     <div className="app-shell">
       <LeftNav />
@@ -14,7 +16,11 @@ export function AppShell() {
           <header className="app-shell__page-head">
             <Outlet />
           </header>
-          <TwoPane />
+          {location.pathname === "/create" || location.pathname === "/show" ? (
+            <TopologyPane />
+          ) : (
+            <TwoPane />
+          )}
         </div>
       </div>
     </div>

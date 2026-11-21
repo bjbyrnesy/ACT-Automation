@@ -1,0 +1,58 @@
+.topology-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  flex: 1;
+  min-height: 280px;
+}
+
+.topology-pane__panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.topology-pane__label {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.topology-pane__yaml {
+  margin: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.topology-pane__diagram {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: var(--text-muted);
+}
+
+.topology-pane__diagram img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 800px) {
+  .topology-pane { grid-template-columns: 1fr; }
+  .topology-pane__panel { min-height: 220px; }
+}
