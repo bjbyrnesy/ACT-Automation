@@ -1754,5 +1754,64 @@ links:
             run.assert_not_called()
 
 
+def _attach_capacity_topology(tmp_path):
+    from acta.capacity import Capacity
+    from acta.create import FabricSpec, emit_act_yaml
+
+    spec = FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity(
+            fabric_mode=None,
+            max_spines=4,
+            max_leaves=8,
+            max_mleafs_per_pair=2,
+            spines=2,
+            leaves=4,
+            use_case=None,
+        ),
+        mlag_pairs=True,
+        spine_mlag=False,
+        member_leaf_pairs=[],
+        member_leaves_per_pair=0,
+    )
+    return emit_act_yaml(spec)
+
+
+def test_attach_host_ports_skip_reserved_leaf_block(tmp_path):
+    from acta import attach
+    from acta.capacity import parse_capacity_header
+    from acta.portplan import PortPlan
+
+    text = _attach_capacity_topology(tmp_path)
+    plan = PortPlan(parse_capacity_header(text))
+    top = plan.leaf_reserved_top()
+    protected = plan.leaf_protected_ports()
+    leaf = next(n for n in sorted(attach._list_nodes(text)) if "leaf1" in n)
+
+    port = attach._next_free_port(text, leaf)
+    assert port > top
+    assert port not in protected
+    assert attach._next_free_port_on_all(text, [leaf]) > top
+
+
+def test_attach_host_rejects_explicit_protected_port(tmp_path):
+    import pytest as _pytest
+
+    from acta import attach
+    from acta.capacity import parse_capacity_header
+    from acta.portplan import PortPlan
+
+    text = _attach_capacity_topology(tmp_path)
+    path = tmp_path / "topology-demo.yml"
+    path.write_text(text, encoding="utf-8")
+    protected = max(PortPlan(parse_capacity_header(text)).leaf_protected_ports())
+    leaf = next(n for n in sorted(attach._list_nodes(text)) if "leaf1" in n)
+
+    with _pytest.raises(ValueError, match="reserved"):
+        attach.attach_host_act(path, "h1", to=[f"{leaf}:Ethernet{protected}"])
+
+
 if __name__ == "__main__":
     unittest.main()

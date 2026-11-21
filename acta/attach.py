@@ -22,6 +22,7 @@ from acta.clab.support import (
 )
 from acta.config import load_config
 from acta.extend import leaf_mlag_pairs, member_leaves
+from acta.portplan import PortPlan
 from acta.topology import parse_connections, used_ports_from_connections
 
 DEFAULT_GENERIC_VERSION = "ubuntu-2204-lts"
@@ -86,26 +87,65 @@ def _parse_endpoint(value: str) -> AttachEndpoint:
     return AttachEndpoint(value.strip(), None)
 
 
-def _next_free_port(text: str, switch: str) -> int:
-    used = used_ports_from_connections(parse_connections(text), switch)
-    for port in range(1, HARD_PORT_MAX + 1):
+def _reservation(text: str, switch: str) -> tuple[int, frozenset[int]]:
+    """Return ``(reserved_top, protected)`` ports for ``switch``.
+
+    Empty when the topology has no capacity header or the switch role has no
+    reserved service blocks, so legacy topologies keep lowest-free behavior.
+    """
+    try:
+        capacity = parse_capacity_header(text)
+    except ValueError:
+        return 0, frozenset()
+    plan = PortPlan(capacity)
+    role = _node_role(switch)
+    if role in {"leaf", "mleaf"}:
+        return plan.leaf_reserved_top(), plan.leaf_protected_ports()
+    if role == "border":
+        return plan.border_reserved_top(), plan.border_protected_ports()
+    return 0, frozenset()
+
+
+def _allocate_host_port(
+    used: set[int], reserved_top: int, protected: frozenset[int]
+) -> int | None:
+    """Prefer ports above the reserved block, then free unprotected ports."""
+    for port in range(reserved_top + 1, HARD_PORT_MAX + 1):
         if port not in used:
             return port
-    raise ValueError(f"no free Ethernet ports on {switch} (hard cap {HARD_PORT_MAX})")
+    for port in range(1, min(reserved_top, HARD_PORT_MAX) + 1):
+        if port not in used and port not in protected:
+            return port
+    return None
+
+
+def _next_free_port(text: str, switch: str) -> int:
+    used = used_ports_from_connections(parse_connections(text), switch)
+    top, protected = _reservation(text, switch)
+    port = _allocate_host_port(used, top, protected)
+    if port is None:
+        raise ValueError(
+            f"no free Ethernet ports on {switch} (hard cap {HARD_PORT_MAX})"
+        )
+    return port
 
 
 def _next_free_port_on_all(text: str, switches: list[str]) -> int:
-    used_by = {
-        switch: used_ports_from_connections(parse_connections(text), switch)
-        for switch in switches
-    }
-    for port in range(1, HARD_PORT_MAX + 1):
-        if all(port not in used_by[switch] for switch in switches):
-            return port
-    names = ", ".join(switches)
-    raise ValueError(
-        f"no shared free Ethernet port on {names} (hard cap {HARD_PORT_MAX})"
-    )
+    used: set[int] = set()
+    top = 0
+    protected: frozenset[int] = frozenset()
+    for switch in switches:
+        used |= used_ports_from_connections(parse_connections(text), switch)
+        sw_top, sw_protected = _reservation(text, switch)
+        top = max(top, sw_top)
+        protected |= sw_protected
+    port = _allocate_host_port(used, top, protected)
+    if port is None:
+        names = ", ".join(switches)
+        raise ValueError(
+            f"no shared free Ethernet port on {names} (hard cap {HARD_PORT_MAX})"
+        )
+    return port
 
 
 def _find_sibling_clab(act_path: Path) -> Path | None:
@@ -177,7 +217,7 @@ def _ensure_generic_block(
 def _append_host_node(text: str, host: str) -> str:
     if host in _list_nodes(text):
         raise ValueError(f"node {host!r} already exists")
-    node_block = f"  - {host}:\n" f"      node_type: generic\n"
+    node_block = f"  - {host}:\n      node_type: generic\n"
     links_match = _LINKS_RE.search(text)
     if links_match is None:
         raise ValueError("ACT topology missing links: section")
@@ -192,10 +232,7 @@ def _append_host_node(text: str, host: str) -> str:
 def _append_connection(
     text: str, host: str, host_port: int, switch: str, sw_port: int
 ) -> str:
-    line = (
-        f"  - connection: "
-        f"[{host}:Ethernet{host_port}, {switch}:Ethernet{sw_port}]\n"
-    )
+    line = f"  - connection: [{host}:Ethernet{host_port}, {switch}:Ethernet{sw_port}]\n"
     if not text.endswith("\n"):
         text += "\n"
     return text + line
@@ -319,6 +356,11 @@ def attach_host_act(
                 raise ValueError(f"Ethernet{sw_port} already used on {endpoint.switch}")
             if sw_port > HARD_PORT_MAX:
                 raise ValueError(f"Ethernet{sw_port} exceeds hard cap {HARD_PORT_MAX}")
+            if sw_port in _reservation(text, endpoint.switch)[1]:
+                raise ValueError(
+                    f"Ethernet{sw_port} on {endpoint.switch} is reserved for "
+                    "MLAG/member-leaf/uplink links; pick another port"
+                )
         text = _append_connection(text, host, index, endpoint.switch, sw_port)
         link_descs.append(
             f"{host}:Ethernet{index} ↔ {endpoint.switch}:Ethernet{sw_port}"
