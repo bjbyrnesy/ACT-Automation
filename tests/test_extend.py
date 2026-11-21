@@ -6,6 +6,7 @@ import pytest
 from acta.capacity import Capacity, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
 from acta.extend import extend_topology
+from acta.site_extend import add_site
 from acta.topology import parse_connections
 
 
@@ -378,6 +379,76 @@ def test_multi_dc_l3ls_spine_links_to_borders(tmp_path: Path):
     assert ("demo-B-border2", 3, "demo-B-spine3", 12) in added
     assert ("demo-B-spine3", 1, "demo-B-leaf1", 3) in added
     assert all("demo-A-" not in item[0] + item[2] for item in added)
+
+
+def test_named_site_growth_uses_persisted_address_block(tmp_path: Path):
+    spec = FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity("l3ls", 4, 8, 2, 2, 2),
+        mlag_pairs=True,
+        spine_mlag=False,
+        member_leaf_pairs=[],
+        member_leaves_per_pair=0,
+        dc_count=2,
+        sites=("dfw", "ord"),
+    )
+    path = tmp_path / "named.yml"
+    path.write_text(add_site(emit_act_yaml(spec), "aus"))
+    before = _endpoint_set(path)
+
+    extend_topology(path, add="leaf", site="ord")
+    extend_topology(path, add="mleaf", site="ord", pair=1)
+    extend_topology(path, add="spine", site="ord")
+
+    text = path.read_text()
+    assert before <= _endpoint_set(path)
+    assert "demo-ord-leaf3:" in text
+    assert "ip_addr: 192.168.0.49/24" in text
+    assert "demo-ord-mleaf1:" in text
+    assert "ip_addr: 192.168.0.56/24" in text
+    assert "demo-ord-spine3:" in text
+    assert "ip_addr: 192.168.0.40/24" in text
+    assert ("demo-ord-border1", 3, "demo-ord-spine3", 11) in _endpoint_set(path)
+
+
+@pytest.mark.parametrize("bb_redundancy,bb_count", [("evpn-aa", 2), ("mlag-peer", 1)])
+def test_l2_spine_growth_without_backbone_peer(
+    tmp_path: Path, bb_redundancy: str, bb_count: int
+):
+    spec = FabricSpec(
+        hostname_prefix="demo",
+        serial_prefix="demo",
+        eos_version="4.35.4M",
+        capacity=Capacity(
+            "l2ls",
+            2,
+            8,
+            0,
+            1,
+            2,
+            bb_redundancy=bb_redundancy,
+            bb_count=bb_count,
+        ),
+        mlag_pairs=False,
+        spine_mlag=False,
+        member_leaf_pairs=[],
+        member_leaves_per_pair=0,
+        dc_count=2,
+        sites=("dfw", "ord"),
+    )
+    path = tmp_path / "l2.yml"
+    path.write_text(add_site(emit_act_yaml(spec), "aus"))
+    before = _endpoint_set(path)
+
+    extend_topology(path, add="spine", site="ord")
+
+    added = _endpoint_set(path) - before
+    assert before <= _endpoint_set(path)
+    assert ("demo-bb1", 4, "demo-ord-spine2", 11) in added
+    if bb_count == 2:
+        assert ("demo-bb2", 4, "demo-ord-spine2", 12) in added
 
 
 def test_multi_dc_l2_spine_limit_is_per_site(tmp_path: Path):

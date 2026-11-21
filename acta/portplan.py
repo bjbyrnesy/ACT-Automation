@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -19,8 +20,9 @@ from acta.site_names import MAX_SITES, validate_site_token
 # Backbone router:
 #   l3ls: site_ordinal*border_count + border_index; peer after max-site block
 #   l2:   site_ordinal*max_spines + spine_index; peer after max-site block
-# Site ordinal = sorted site-name order. Peer is reserved for MAX_SITES (clamped
-# to the Ethernet16 budget) so later site adds never renumber existing endpoints.
+# Created sites use sorted name order; subsequent growth reads the ordinal from
+# each site's persisted management-address block. Peer is reserved for MAX_SITES
+# (clamped to the Ethernet16 budget) so later adds never renumber endpoints.
 SPINE_UPLINK_OFFSET = 2  # uplinks start after the 2-port spine MLAG block
 BORDER_BB_OFFSET = 2  # border bb ports start after the 2-port border MLAG block
 
@@ -33,6 +35,24 @@ def site_ordinal(site: str, sites: Sequence[str]) -> int:
         return ordered.index(token)
     except ValueError as exc:
         raise ValueError(f"site {site!r} is not in the site list") from exc
+
+
+def persisted_site_ordinal(text: str, hostname_prefix: str, site: str) -> int:
+    """Read a site's stable ordinal from its spine1 management-address block."""
+    name = f"{hostname_prefix}-{validate_site_token(site)}-spine1"
+    node = re.search(rf"^  - {re.escape(name)}:\s*$", text, re.MULTILINE)
+    if node is None:
+        raise ValueError(f"site {site!r} has no spine1 node")
+    following = text[node.end() :].split("\n  - ", 1)[0]
+    address = re.search(
+        r"^\s+ip_addr:\s*192\.168\.0\.(\d+)/24\s*$", following, re.MULTILINE
+    )
+    if address is None:
+        raise ValueError(f"site {site!r} has no recognizable spine1 address")
+    offset = int(address.group(1)) - 8
+    if offset < 0 or offset % 30 or offset // 30 >= MAX_SITES:
+        raise ValueError(f"site {site!r} has an invalid address-block ordinal")
+    return offset // 30
 
 
 @dataclass(frozen=True)
@@ -124,8 +144,7 @@ class PortPlan:
         """bb port for spine ``spine_index`` of a 0-based site (l2 fabrics)."""
         if spine_index < 1 or spine_index > self.capacity.max_spines:
             raise ValueError(
-                f"spine_index must be 1..{self.capacity.max_spines} "
-                f"(got {spine_index})"
+                f"spine_index must be 1..{self.capacity.max_spines} (got {spine_index})"
             )
         if site_index < 0 or site_index >= self.max_attach_sites():
             raise ValueError(

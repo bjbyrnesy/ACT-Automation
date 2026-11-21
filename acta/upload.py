@@ -117,10 +117,20 @@ def _create_topology(client: ActClient, topology: Path, name: str) -> tuple[str,
 
     message = detail.get("error") or result.get("error") or str(result)
     if "already exists" in str(message):
-        print(f"Topology '{name}' already exists in ACT.")
-        topo_id, pathname = _lookup_existing(client, name)
-        print(f"  Topology ID: {topo_id}")
-        return topo_id, pathname
+        # Fail closed: reusing the old topology would deploy stale contents
+        # while implying the new YAML was uploaded.
+        existing = ""
+        try:
+            existing_id, _ = _lookup_existing(client, name)
+            existing = f" (existing ID: {existing_id})"
+        except UploadError:
+            pass
+        raise UploadError(
+            f"topology '{name}' already exists in ACT{existing} and was NOT "
+            "updated with this YAML. Delete it in ACT or upload under a "
+            "different name; refusing to create or deploy a lab from stale "
+            "contents."
+        )
     raise UploadError(f"topology creation failed: {message}")
 
 

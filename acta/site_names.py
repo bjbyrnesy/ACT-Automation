@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 MAX_SITES = 8
 SITE_SOFT_CAP = 32
@@ -17,6 +18,11 @@ _MULTI_FABRIC_RE = re.compile(
 _BB_RE = re.compile(r"-bb(?P<index>[1-9]\d*)$")
 _SINGLE_FABRIC_RE = re.compile(
     r"-(?P<role>border|spine|leaf|mleaf)(?P<index>[1-9]\d*)$"
+)
+_BB_SUFFIX_RE = re.compile(r"^bb(?P<index>[1-9]\d*)$")
+_FABRIC_SUFFIX_RE = re.compile(
+    r"^(?:(?P<site>[A-Za-z0-9][A-Za-z0-9_-]*)-)?"
+    r"(?P<role>border|spine|leaf|mleaf)(?P<index>[1-9]\d*)$"
 )
 
 
@@ -70,19 +76,40 @@ def backbone_hostname(prefix: str, index: int) -> str:
     return name
 
 
-def parse_fabric_identity(hostname: str) -> tuple[str | None, str, int] | None:
+def _parse_suffix(rest: str) -> tuple[str | None, str, int] | None:
+    """Parse ``bbN``, ``roleN``, or ``site-roleN`` after a known prefix."""
+    bb = _BB_SUFFIX_RE.fullmatch(rest)
+    if bb is not None:
+        return None, "bb", int(bb.group("index"))
+    fabric = _FABRIC_SUFFIX_RE.fullmatch(rest)
+    if fabric is not None:
+        return (
+            fabric.group("site"),
+            fabric.group("role"),
+            int(fabric.group("index")),
+        )
+    return None
+
+
+def parse_fabric_identity(
+    hostname: str, *, prefix: str | None = None
+) -> tuple[str | None, str, int] | None:
     """Return ``(site|None, role, index)`` from an ACT fabric hostname.
 
-    Recognizes named sites (``blz3-mso-spine1``), letter sites (``demo-A-leaf2``),
-    backbone (``blz3-bb1``), and single-site (``demo-spine1``).
+    When ``prefix`` is known (from a ``*-bbN`` node or the caller), hyphenated
+    prefixes disambiguate: ``my-lab-spine1`` is single-site and
+    ``my-lab-aus-spine1`` yields site ``aus``.
+
+    Without ``prefix``, backbone wins, then single-site role suffix. Named
+    multi-site hostnames need ``prefix`` so ``lab`` in ``my-lab-spine1`` is not
+    mistaken for a site token.
     """
-    multi = _MULTI_FABRIC_RE.search(hostname)
-    if multi is not None:
-        return (
-            multi.group("site"),
-            multi.group("role"),
-            int(multi.group("index")),
-        )
+    if prefix is not None:
+        head = f"{prefix}-"
+        if not hostname.startswith(head):
+            return None
+        return _parse_suffix(hostname[len(head) :])
+
     bb = _BB_RE.search(hostname)
     if bb is not None:
         return None, "bb", int(bb.group("index"))
@@ -92,18 +119,40 @@ def parse_fabric_identity(hostname: str) -> tuple[str | None, str, int] | None:
     return None
 
 
-def hostname_prefix_of(hostname: str) -> str:
-    """Strip site/role/index (or bb index) suffix from a fabric hostname."""
-    multi = _MULTI_FABRIC_RE.search(hostname)
-    if multi is not None:
-        return hostname[: multi.start()]
+def hostname_prefix_of(hostname: str, *, prefix: str | None = None) -> str:
+    """Strip site/role/index (or bb index) suffix from a fabric hostname.
+
+    Prefer an explicit ``prefix`` when known. Otherwise prefer backbone, then
+    single-site role strip (hyphenated prefixes like ``my-lab-spine1``).
+    """
+    if prefix is not None:
+        head = f"{prefix}-"
+        if hostname.startswith(head):
+            return prefix
     bb = _BB_RE.search(hostname)
     if bb is not None:
         return hostname[: bb.start()]
     single = _SINGLE_FABRIC_RE.search(hostname)
     if single is not None:
         return hostname[: single.start()]
+    multi = _MULTI_FABRIC_RE.search(hostname)
+    if multi is not None:
+        return hostname[: multi.start()]
     return hostname
+
+
+def fabric_prefix_from_names(names: Iterable[str]) -> str | None:
+    """Detect lab hostname prefix, preferring ``*-bbN`` over fabric nodes."""
+    fallback: str | None = None
+    for name in names:
+        bb = _BB_RE.search(name)
+        if bb is not None:
+            return name[: bb.start()]
+        if fallback is None:
+            single = _SINGLE_FABRIC_RE.search(name)
+            if single is not None:
+                fallback = name[: single.start()]
+    return fallback
 
 
 def dot_safe_id(token: str) -> str:

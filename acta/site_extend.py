@@ -20,6 +20,7 @@ from acta.site_names import (
     MAX_SITES,
     backbone_hostname,
     fabric_hostname,
+    fabric_prefix_from_names,
     validate_site_token,
 )
 from acta.topology import Connection
@@ -54,14 +55,11 @@ def _has_backbone(text: str) -> bool:
 
 
 def _detect_hostname_prefix(text: str) -> str:
-    for name in _node_names(text):
-        match = _SINGLE_FABRIC_RE.fullmatch(name)
-        if match is not None:
-            return match.group("prefix")
-        bb_match = _BB_NODE_RE.fullmatch(name)
-        if bb_match is not None:
-            return bb_match.group("prefix")
-    raise ValueError("topology has no fabric or backbone nodes to promote")
+    """Prefer ``*-bbN`` so fabric-before-bb YAML still yields the real prefix."""
+    prefix = fabric_prefix_from_names(_node_names(text))
+    if prefix is None:
+        raise ValueError("topology has no fabric or backbone nodes to promote")
+    return prefix
 
 
 def _detect_serial_prefix(text: str, hostname_prefix: str) -> str:
@@ -522,7 +520,7 @@ def ensure_multi_dc(
         block = f"  # Site {site} — Border leaves\n\n{body}"
         updated = (
             f"{updated[: spine_marker.start()].rstrip()}\n\n{block}\n\n"
-            f"{updated[spine_marker.start():]}"
+            f"{updated[spine_marker.start() :]}"
         )
 
     link_lines: list[str] = []
@@ -627,7 +625,7 @@ def add_site(
         raise ValueError("topology is missing a links section")
     updated = (
         f"{text[: marker.start()].rstrip()}\n\n{node_block_text}\n\n"
-        f"{text[marker.start():]}"
+        f"{text[marker.start() :]}"
     )
 
     link_lines: list[str] = []

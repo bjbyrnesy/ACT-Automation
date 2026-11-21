@@ -8,9 +8,9 @@ from datetime import date
 from pathlib import Path
 
 from acta.capacity import Capacity, format_capacity_header, parse_capacity_header
-from acta.create import SITE_LETTERS, node_block
+from acta.create import node_block
 from acta.diagram import topology_to_dot, write_png
-from acta.portplan import PortPlan
+from acta.portplan import PortPlan, persisted_site_ordinal
 from acta.topology import Connection, parse_connections, used_ports_from_connections
 
 _CAPACITY_LINE_RE = re.compile(r"^#\s*capacity:.*$", re.MULTILINE)
@@ -116,8 +116,13 @@ def _node_yaml(
     role: str,
     index: int,
     site: str | None = None,
+    site_index: int | None = None,
 ) -> str:
-    return "\n".join(node_block(hostname_prefix, serial_prefix, role, index, site))
+    return "\n".join(
+        node_block(
+            hostname_prefix, serial_prefix, role, index, site, site_index=site_index
+        )
+    )
 
 
 def _insert_node(text: str, node_yaml: str) -> str:
@@ -125,7 +130,7 @@ def _insert_node(text: str, node_yaml: str) -> str:
     if marker is None:
         raise ValueError("topology is missing a links section")
     return (
-        f"{text[: marker.start()].rstrip()}\n\n{node_yaml}\n\n{text[marker.start():]}"
+        f"{text[: marker.start()].rstrip()}\n\n{node_yaml}\n\n{text[marker.start() :]}"
     )
 
 
@@ -322,13 +327,12 @@ def _spine_uplink_connections(
     connections: list[Connection],
     stem: str,
     site: str,
+    site_index: int,
     spine_name: str,
     spine_index: int,
     warnings: list[str],
-    dc_count: int,
 ) -> list[Connection]:
     """Link a new multi-DC spine to its site's borders (l3ls) or the bbs (l2)."""
-    site_index = SITE_LETTERS.index(site)
     hostname_prefix = stem.removesuffix(f"-{site}")
     spine_rule = _spine_rule(plan, True)
     overrun = spine_index > plan.capacity.max_spines
@@ -345,8 +349,15 @@ def _spine_uplink_connections(
         else:
             peer_name = f"{hostname_prefix}-bb{peer_number}"
             peer_preferred = plan.bb_spine_port(site_index, spine_index)
-            peer_top = plan.bb_peer_port(dc_count)
-            peer_rule = _PortRule(peer_top, frozenset((peer_top,)))
+            edge_top = plan.bb_edge_width() * plan.max_attach_sites()
+            if (
+                plan.capacity.bb_redundancy == "mlag-peer"
+                and plan.capacity.bb_count >= 2
+            ):
+                peer_port = plan.bb_peer_port()
+                peer_rule = _PortRule(peer_port, frozenset((peer_port,)))
+            else:
+                peer_rule = _PortRule(edge_top, frozenset())
         spine_port = _allocate_port(
             plan,
             used_ports_from_connections(connections, spine_name),
@@ -580,7 +591,7 @@ def extend_topology(
     original_connections = parse_connections(text)
     multi_prefix = _multi_dc_prefix(text)
     site_name: str | None = None
-    dc_count = 1
+    site_index: int | None = None
     if multi_prefix is None:
         if site is not None:
             raise ValueError(
@@ -592,11 +603,9 @@ def extend_topology(
         serial_match = _SERIAL_RE.search(text)
     else:
         available = _sites(text, multi_prefix)
-        dc_count = len(available)
         if site is None:
             raise ValueError(
-                "multi-DC topology requires --site "
-                f"(available: {', '.join(available)})"
+                f"multi-DC topology requires --site (available: {', '.join(available)})"
             )
         available_map = {name.casefold(): name for name in available}
         if site.casefold() not in available_map:
@@ -604,6 +613,7 @@ def extend_topology(
                 f"site {site} not found (available: {', '.join(available)})"
             )
         site_name = available_map[site.casefold()]
+        site_index = persisted_site_ordinal(text, multi_prefix, site_name)
         scope = {"hostname_prefix": multi_prefix, "site": site_name}
         spines = _fabric_nodes(text, "spine", **scope)
         leaves = _fabric_nodes(text, "leaf", **scope)
@@ -656,7 +666,12 @@ def extend_topology(
             updated_text = _insert_node(
                 updated_text,
                 _node_yaml(
-                    hostname_prefix, serial_prefix, "leaf", leaf_index, site_name
+                    hostname_prefix,
+                    serial_prefix,
+                    "leaf",
+                    leaf_index,
+                    site_name,
+                    site_index,
                 ),
             )
             updated_text = _append_connections(updated_text, new_connections)
@@ -729,16 +744,21 @@ def extend_topology(
                         connections,
                         stem,
                         site_name,
+                        site_index,
                         spine_name,
                         spine_index,
                         warnings,
-                        dc_count,
                     )
                 )
             updated_text = _insert_node(
                 updated_text,
                 _node_yaml(
-                    hostname_prefix, serial_prefix, "spine", spine_index, site_name
+                    hostname_prefix,
+                    serial_prefix,
+                    "spine",
+                    spine_index,
+                    site_name,
+                    site_index,
                 ),
             )
             updated_text = _append_connections(updated_text, new_connections)
@@ -791,7 +811,12 @@ def extend_topology(
             updated_text = _insert_node(
                 updated_text,
                 _node_yaml(
-                    hostname_prefix, serial_prefix, "mleaf", mleaf_index, site_name
+                    hostname_prefix,
+                    serial_prefix,
+                    "mleaf",
+                    mleaf_index,
+                    site_name,
+                    site_index,
                 ),
             )
             updated_text = _append_connections(updated_text, mleaf_connections)

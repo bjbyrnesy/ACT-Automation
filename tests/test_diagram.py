@@ -113,6 +113,37 @@ def test_named_site_multi_dc_dot_keeps_both_sites():
     assert "subgraph cluster_" in dot
 
 
+def test_hyphenated_prefix_named_sites_keep_clusters():
+    text = emit_act_yaml(
+        FabricSpec(
+            hostname_prefix="my-lab",
+            serial_prefix="my-lab",
+            eos_version="4.35.4M",
+            capacity=Capacity(
+                fabric_mode="l3ls",
+                max_spines=4,
+                max_leaves=8,
+                max_mleafs_per_pair=0,
+                spines=2,
+                leaves=2,
+            ),
+            mlag_pairs=True,
+            spine_mlag=False,
+            member_leaf_pairs=[],
+            member_leaves_per_pair=0,
+            dc_count=2,
+            sites=("aus", "dfw"),
+        )
+    )
+    dot = topology_to_dot(text)
+    assert "subgraph cluster_aus" in dot
+    assert "subgraph cluster_dfw" in dot
+    assert "aus_spine1" in dot
+    assert "dfw_spine1" in dot
+    # Must not treat "lab" as a site from hyphenated prefix my-lab-*.
+    assert "cluster_lab" not in dot
+
+
 @pytest.mark.skipif(shutil.which("dot") is None, reason="Graphviz dot not installed")
 def test_write_png_renders_with_graphviz(tmp_path: Path):
     png = tmp_path / "topo.png"

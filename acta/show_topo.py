@@ -24,6 +24,7 @@ from acta.attach import attached_hosts, host_links
 from acta.capacity import HARD_PORT_MAX, parse_capacity_header
 from acta.diagram import topology_to_dot, write_png
 from acta.extend import leaf_mlag_pairs, member_leaf_parents, member_leaves
+from acta.site_names import fabric_prefix_from_names, parse_fabric_identity
 from acta.topology import parse_connections, used_ports_from_connections
 
 _NODE_RE = re.compile(r"^  - (?P<name>[^:\n]+):\s*$", re.MULTILINE)
@@ -82,10 +83,8 @@ def _peer_ports(text: str, leaf_a: str, leaf_b: str) -> list[int]:
     return sorted(set(ports))
 
 
-def _site_of(name: str) -> str:
-    from acta.site_names import parse_fabric_identity
-
-    parsed = parse_fabric_identity(name)
+def _site_of(name: str, *, prefix: str | None = None) -> str:
+    parsed = parse_fabric_identity(name, prefix=prefix)
     if parsed is None:
         return "-"
     site, _role, _index = parsed
@@ -634,6 +633,7 @@ def _summary_and_mlag(
     console.print(summary)
     console.print()
 
+    site_prefix = fabric_prefix_from_names(nodes)
     pairs = leaf_mlag_pairs(text)
     mlag = Table(
         title="MLAG leaf pairs  (use --mlag-pair N with attach)", show_lines=False
@@ -657,7 +657,7 @@ def _summary_and_mlag(
             leaf_b,
             ",".join(str(p) for p in _peer_ports(text, leaf_a, leaf_b)) or "-",
             free_preview or "-",
-            _site_of(leaf_a),
+            _site_of(leaf_a, prefix=site_prefix),
         )
     console.print(mlag)
     console.print()
@@ -690,7 +690,7 @@ def _summary_and_mlag(
             leaf_a,
             leaf_b,
             free_preview or "-",
-            _site_of(name),
+            _site_of(name, prefix=site_prefix),
         )
     console.print(members)
     console.print()
