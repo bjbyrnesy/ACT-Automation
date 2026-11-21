@@ -17,6 +17,10 @@ dev = [
   "black>=25.0",
   "pre-commit>=4.0",
 ]
+ui = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+]
 
 [project.scripts]
 acta = "acta.cli:main"
