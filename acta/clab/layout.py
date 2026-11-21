@@ -1,14 +1,15 @@
 """Containerlab Topology Viewer layout and annotations."""
 
-from acta.site_names import parse_fabric_identity
+from acta.site_names import fabric_prefix_from_names, parse_fabric_identity
 
 
 def topology_layout(names, links=()):
     """Lay out fabric roles, grouping member leaves beneath their uplinks."""
     rows = {"bb": 0, "border": 180, "spine": 360, "leaf": 540, "mleaf": 720}
     groups, roles = {}, {}
+    prefix = fabric_prefix_from_names(names)
     for name in names:
-        parsed = parse_fabric_identity(name)
+        parsed = parse_fabric_identity(name, prefix=prefix)
         if parsed is None:
             continue
         site, role, number = parsed

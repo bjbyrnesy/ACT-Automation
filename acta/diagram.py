@@ -12,6 +12,7 @@ from pathlib import Path
 from acta.capacity import parse_capacity_header
 from acta.site_names import (
     dot_safe_id,
+    fabric_prefix_from_names,
     hostname_prefix_of,
     parse_fabric_identity,
 )
@@ -88,9 +89,11 @@ def write_png(dot_source: str, png_path: Path) -> bool:
 
 
 def _parse_nodes(topology_source: str) -> list[_Node]:
+    blocks = list(_NODE_BLOCK_RE.finditer(topology_source))
+    prefix = fabric_prefix_from_names(match.group("name").strip() for match in blocks)
     nodes: list[_Node] = []
     host_ordinal = 0
-    for match in _NODE_BLOCK_RE.finditer(topology_source):
+    for match in blocks:
         name = match.group("name").strip()
         body = match.group("body")
         ip_match = _IP_RE.search(body)
@@ -110,7 +113,7 @@ def _parse_nodes(topology_source: str) -> list[_Node]:
                 )
             )
             continue
-        parsed = _parse_identity(name)
+        parsed = _parse_identity(name, prefix=prefix)
         if parsed is None:
             continue
         site, role, index = parsed
@@ -175,12 +178,17 @@ def _with_host_sites(nodes: list[_Node], connections: list[Connection]) -> list[
     return assigned
 
 
-def _parse_identity(hostname: str) -> tuple[str | None, str, int] | None:
+def _parse_identity(
+    hostname: str, *, prefix: str | None = None
+) -> tuple[str | None, str, int] | None:
     """Return ``(site|None, role, index)`` from an ACT hostname."""
-    return parse_fabric_identity(hostname)
+    return parse_fabric_identity(hostname, prefix=prefix)
 
 
 def _host_prefix(nodes: list[_Node]) -> str:
+    for node in nodes:
+        if node.role == "bb":
+            return hostname_prefix_of(node.name)
     return hostname_prefix_of(nodes[0].name)
 
 
@@ -340,8 +348,7 @@ def _append_host_ranks(
         )
     for upper, lower in itertools.pairwise(rows):
         lines.append(
-            f"{indent}{upper[0].dot_id} -> {lower[0].dot_id} "
-            f"[style=invis, weight=100];"
+            f"{indent}{upper[0].dot_id} -> {lower[0].dot_id} [style=invis, weight=100];"
         )
     # Keep hosts in a row left-to-right.
     for row in rows:
