@@ -8,6 +8,7 @@ and onboard switches to **CVaaS**.
 acta.py act  {create,extend,upload,onboard}              # ACT / vEOS
 acta.py clab {create,generate,deploy,destroy,redeploy,onboard,show}
 acta.py show | attach | ssh                              # day-2 (both platforms)
+acta.py serve | ui                                       # local Web UI (127.0.0.1)
 ```
 
 Examples assume an activated venv (see [Install](#install)). Use `acta …` or
@@ -78,17 +79,28 @@ acta ssh A-leaf1 -- show hostname
 acta clab redeploy mylab.clab.yml        # after attach/extend
 ```
 
-### Web UI (dev)
+### Web UI (local)
+
+Localhost ops console (Create → Graphviz preview → Write, Labs/Show, Extend,
+Attach, Clab/ACT jobs, Settings). Binds **127.0.0.1:8765** and opens a browser.
+Clab host may be local or remote via Settings / `CLAB_HOST`. No SSH-in-UI.
+Graphviz `dot` required for PNG preview.
 
 ```bash
-# Terminal 1 — API (also serves built SPA from acta/web/static when present)
-acta serve
-
-# Terminal 2 — Vite SPA with /api proxied to :8765
-cd ui && npm ci && npm run dev
-
-# Production-style assets for acta serve
+uv sync --extra ui --extra dev
+# first time / after ui/ changes:
 bash scripts/build-ui.sh
+acta serve                 # alias: acta ui
+# optional: acta serve --no-open --root /path/to/labs
+```
+
+Dev (Vite hot reload, API still via `acta serve`):
+
+```bash
+# Terminal 1
+acta serve --no-open
+# Terminal 2
+cd ui && npm ci && npm run dev   # proxies /api → :8765
 ```
 
 ---
@@ -97,6 +109,7 @@ bash scripts/build-ui.sh
 
 | Command | Purpose |
 | --- | --- |
+| `serve` / `ui` | Local Web UI on 127.0.0.1 (opens browser) |
 | `act create` | Interactive fabric + capacity header; `--for act\|clab\|both` |
 | `act extend` | Add leaf / mleaf / site / … on unused ports only |
 | `act upload` | Push YAML to ACT; optional lab create/deploy |

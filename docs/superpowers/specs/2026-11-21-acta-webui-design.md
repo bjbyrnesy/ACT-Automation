@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-21  
 **Branch intent:** `feat/acta-webui` (implementation follows a separate plan)  
-**Status:** draft for review  
+**Status:** implemented on `feat/acta-webui` (review/PR)  
 **Approach:** Library-backed FastAPI + SPA (Approach A)
 
 ## Summary
