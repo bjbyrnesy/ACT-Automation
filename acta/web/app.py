@@ -17,6 +17,7 @@ from acta.web.errors import WebError
 from acta.web.jobs import get_job, list_jobs
 from acta.web.labs import list_topologies, read_topology, write_topology
 from acta.web.preview import preview_from_spec
+from acta.web.routes_ops import router as ops_router
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -152,6 +153,8 @@ def create_app(*, labs_root: Path) -> FastAPI:
             "created_at": job.created_at,
             "finished_at": job.finished_at,
         }
+
+    app.include_router(ops_router)
 
     # Only mount SPA when a real build is present (avoid catching /api via .gitkeep).
     if (_STATIC_DIR / "index.html").is_file():
