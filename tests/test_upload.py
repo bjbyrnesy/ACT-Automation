@@ -112,7 +112,7 @@ def test_deploy_true_creates_and_deploys_lab(topo, tmp_path):
     assert ("POST", "/labs/L1/deploy") in [c[:2] for c in fake.calls]
 
 
-def test_existing_topology_is_looked_up(topo, tmp_path):
+def test_existing_topology_fails_closed(topo, tmp_path):
     fake = FakeAct()
     fake.ops["op-1"] = _done({"error": "name already exists"}, status="Failed")
     fake.extra[("POST", "/topologies")] = lambda body: httpx.Response(200, json=_op())
@@ -120,10 +120,10 @@ def test_existing_topology_is_looked_up(topo, tmp_path):
         200, json={"result": [{"id": "T9", "topology_pathname": "p9"}]}
     )
 
-    _upload(fake, topo, tmp_path, deploy=False)
+    with pytest.raises(upload.UploadError, match="NOT updated|was NOT"):
+        _upload(fake, topo, tmp_path, deploy=True)
 
-    lookup = next(c for c in fake.calls if c[:2] == ("GET", "/topologies"))
-    assert lookup[3]["topology_pathname"] == "fabric"
+    assert not any(c[1].startswith("/labs") for c in fake.calls)
 
 
 def test_deploy_none_prompts(topo, tmp_path, monkeypatch):
