@@ -7,7 +7,13 @@ import pytest
 
 from acta.capacity import Capacity, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
-from acta.site_extend import MAX_SITES, add_site, ensure_multi_dc
+from acta.site_extend import (
+    MAX_SITES,
+    _detect_hostname_prefix,
+    add_site,
+    ensure_multi_dc,
+    list_sites,
+)
 from acta.topology import parse_connections
 
 
@@ -250,3 +256,79 @@ def test_extend_add_site_promotes_and_writes_new_file(tmp_path: Path):
     assert "demo-aus-spine1:" in text
     assert "demo-bb1:" in text
     assert source.read_text() == _single("l3ls")
+
+
+def test_detect_prefix_prefers_backbone_when_fabric_listed_first():
+    """Fabric-before-bb YAML must still resolve the real lab prefix."""
+    yaml = """# capacity: fabric_mode=l3ls max_spines=4 max_leaves=8 \
+max_mleafs_per_pair=0 spines=2 leaves=2 bb_count=2 border_count=2 \
+bb_redundancy=mlag-peer border_redundancy=mlag-peer
+name: x
+nodes:
+  - demo-A-spine1:
+      node_type: veos
+      ip_addr: 192.168.0.10/24
+      serial_number: demo-A-spine1
+      system_mac_address: aa:aa:aa:aa:aa:01
+  - demo-A-leaf1:
+      node_type: veos
+      ip_addr: 192.168.0.20/24
+      serial_number: demo-A-leaf1
+      system_mac_address: aa:aa:aa:aa:aa:02
+  - demo-bb1:
+      node_type: veos
+      ip_addr: 192.168.0.2/24
+      serial_number: demo-bb1
+      system_mac_address: aa:aa:aa:aa:aa:03
+  - demo-bb2:
+      node_type: veos
+      ip_addr: 192.168.0.3/24
+      serial_number: demo-bb2
+      system_mac_address: aa:aa:aa:aa:aa:04
+links:
+  - connection: [demo-A-spine1:Ethernet1, demo-A-leaf1:Ethernet1]
+"""
+    assert _detect_hostname_prefix(yaml) == "demo"
+    assert list_sites(yaml) == ["A"]
+    added = add_site(yaml, "aus")
+    assert "demo-aus-spine1:" in added
+    assert "demo-A-aus-spine1:" not in added
+    assert "demo-A-bb1" not in added
+    endpoints = {frozenset((c.a_node, c.b_node)) for c in parse_connections(added)}
+    assert frozenset(("demo-aus-border1", "demo-bb1")) in endpoints
+
+
+def test_detect_prefix_hyphenated_lab_with_fabric_before_bb():
+    yaml = """# capacity: fabric_mode=l3ls max_spines=4 max_leaves=8 \
+max_mleafs_per_pair=0 spines=2 leaves=2 bb_count=2 border_count=2 \
+bb_redundancy=mlag-peer border_redundancy=mlag-peer
+name: x
+nodes:
+  - my-lab-aus-spine1:
+      node_type: veos
+      ip_addr: 192.168.0.10/24
+      serial_number: my-lab-aus-spine1
+      system_mac_address: aa:aa:aa:aa:aa:01
+  - my-lab-aus-leaf1:
+      node_type: veos
+      ip_addr: 192.168.0.20/24
+      serial_number: my-lab-aus-leaf1
+      system_mac_address: aa:aa:aa:aa:aa:02
+  - my-lab-bb1:
+      node_type: veos
+      ip_addr: 192.168.0.2/24
+      serial_number: my-lab-bb1
+      system_mac_address: aa:aa:aa:aa:aa:03
+  - my-lab-bb2:
+      node_type: veos
+      ip_addr: 192.168.0.3/24
+      serial_number: my-lab-bb2
+      system_mac_address: aa:aa:aa:aa:aa:04
+links:
+  - connection: [my-lab-aus-spine1:Ethernet1, my-lab-aus-leaf1:Ethernet1]
+"""
+    assert _detect_hostname_prefix(yaml) == "my-lab"
+    assert list_sites(yaml) == ["aus"]
+    added = add_site(yaml, "dfw")
+    assert "my-lab-dfw-spine1:" in added
+    assert "my-lab-aus-dfw-spine1:" not in added
