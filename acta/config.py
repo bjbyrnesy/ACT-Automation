@@ -43,6 +43,8 @@ CONFIG_KEYS = (
     "MAX_SPINES",
     "MAX_LEAVES",
     "MAX_MLEAFS_PER_PAIR",
+    "PREVIEW_AUTO",
+    "PREVIEW_DEBOUNCE_MS",
 )
 
 _ASSIGNMENT_RE = re.compile(r"^(?P<key>[A-Z][A-Z0-9_]*)=(?P<value>.*)$")
