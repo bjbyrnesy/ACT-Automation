@@ -29,6 +29,11 @@ def test_web_error_handler_returns_json(tmp_path: Path) -> None:
     def _boom() -> None:
         raise WebError(400, "bad input", fields={"name": "required"})
 
+    # create_app may mount SPA StaticFiles at "/"; a route registered after
+    # that mount is shadowed. Prefer the API probe over the catch-all.
+    boom_route = app.router.routes.pop()
+    app.router.routes.insert(0, boom_route)
+
     client = TestClient(app)
     response = client.get("/api/_boom")
     assert response.status_code == 400

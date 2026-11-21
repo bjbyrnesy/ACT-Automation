@@ -78,6 +78,19 @@ acta ssh A-leaf1 -- show hostname
 acta clab redeploy mylab.clab.yml        # after attach/extend
 ```
 
+### Web UI (dev)
+
+```bash
+# Terminal 1 — API (also serves built SPA from acta/web/static when present)
+acta serve
+
+# Terminal 2 — Vite SPA with /api proxied to :8765
+cd ui && npm ci && npm run dev
+
+# Production-style assets for acta serve
+bash scripts/build-ui.sh
+```
+
 ---
 
 ## CLI map
