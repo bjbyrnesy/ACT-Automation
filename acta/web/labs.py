@@ -10,6 +10,40 @@ from acta.web.errors import WebError
 
 _NODES_LINE = re.compile(r"(?m)^nodes\s*:")
 _STEM = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+# ``{lab}-{YYYY-MM-DD}.yml`` or ``{lab}-{YYYY-MM-DD}-{n}.yml``; else whole stem is lab id.
+_VERSIONED = re.compile(r"^(?P<lab>.+)-(?P<date>\d{4}-\d{2}-\d{2})(?:-(?P<rev>\d+))?$")
+
+
+def lab_id_from_filename(name: str) -> str:
+    """Return the lab id (filename stem before an optional dated suffix)."""
+    stem = Path(name).stem
+    match = _VERSIONED.fullmatch(stem)
+    if match is None:
+        return stem
+    return match.group("lab")
+
+
+def _is_act_topology(path: Path) -> bool:
+    if path.suffix not in {".yml", ".yaml"}:
+        return False
+    if path.name.endswith((".clab.yml", ".clab.yaml")) or not path.is_file():
+        return False
+    if path.is_symlink():
+        return False
+    return bool(_NODES_LINE.search(path.read_text(encoding="utf-8")))
+
+
+def _entry(path: Path, *, root: Path) -> dict:
+    clab_stem = f"{path.stem}.clab"
+    return {
+        "name": path.name,
+        "path": str(path),
+        "lab_id": lab_id_from_filename(path.name),
+        "mtime": path.stat().st_mtime,
+        "has_clab_sibling": any(
+            (root / f"{clab_stem}{suffix}").is_file() for suffix in (".yml", ".yaml")
+        ),
+    }
 
 
 def list_topologies(root: Path) -> list[dict]:
@@ -19,27 +53,41 @@ def list_topologies(root: Path) -> list[dict]:
 
     entries = []
     for path in sorted(root.iterdir()):
-        if path.suffix not in {".yml", ".yaml"}:
+        if not _is_act_topology(path):
             continue
-        if path.name.endswith((".clab.yml", ".clab.yaml")) or not path.is_file():
-            continue
-        if path.is_symlink() or not _NODES_LINE.search(
-            path.read_text(encoding="utf-8")
-        ):
-            continue
-        clab_name = f"{path.stem}.clab"
-        entries.append(
+        entries.append(_entry(path, root=root))
+    return entries
+
+
+def list_labs(root: Path) -> list[dict]:
+    """Group ACT topologies by lab id (filename stem before date)."""
+    groups: dict[str, list[dict]] = {}
+    for entry in list_topologies(root):
+        groups.setdefault(entry["lab_id"], []).append(entry)
+
+    labs: list[dict] = []
+    for lab_id, versions in sorted(groups.items()):
+        versions_sorted = sorted(versions, key=lambda item: item["mtime"], reverse=True)
+        latest = versions_sorted[0]
+        labs.append(
             {
-                "name": path.name,
-                "path": str(path),
-                "mtime": path.stat().st_mtime,
-                "has_clab_sibling": any(
-                    (root / f"{clab_name}{suffix}").is_file()
-                    for suffix in (".yml", ".yaml")
-                ),
+                "id": lab_id,
+                "version_count": len(versions_sorted),
+                "latest": latest,
+                "versions": versions_sorted,
             }
         )
-    return entries
+    return labs
+
+
+def get_lab(root: Path, lab_id: str) -> dict:
+    """Return one lab with its versions, or 404."""
+    if not lab_id or not _STEM.fullmatch(lab_id):
+        raise WebError(400, "Invalid lab id")
+    for lab in list_labs(root):
+        if lab["id"] == lab_id:
+            return lab
+    raise WebError(404, "Lab not found")
 
 
 def read_topology(root: Path, name: str) -> dict:
@@ -56,9 +104,37 @@ def read_topology(root: Path, name: str) -> dict:
     path = root / name
     if not path.resolve().is_relative_to(root.resolve()):
         raise WebError(400, "Invalid topology name")
+    if path.is_symlink():
+        raise WebError(400, "Invalid topology name")
     if not path.is_file():
         raise WebError(404, "Topology not found")
-    return {"yaml_text": path.read_text(encoding="utf-8"), "path": str(path)}
+    return {
+        "yaml_text": path.read_text(encoding="utf-8"),
+        "path": str(path),
+        "name": path.name,
+        "lab_id": lab_id_from_filename(path.name),
+    }
+
+
+def delete_topology(root: Path, name: str) -> None:
+    """Delete one ACT topology file by basename."""
+    if (
+        not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or Path(name).suffix not in {".yml", ".yaml"}
+    ):
+        raise WebError(400, "Invalid topology name")
+
+    path = root / name
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise WebError(400, "Invalid topology name")
+    if path.is_symlink() or not path.is_file():
+        raise WebError(404, "Topology not found")
+    if not _is_act_topology(path):
+        raise WebError(400, "Not an ACT topology file")
+    path.unlink()
 
 
 def write_topology(root: Path, yaml_text: str, *, stem: str | None = None) -> Path:

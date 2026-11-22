@@ -84,7 +84,50 @@ export function getJob(id: string, signal?: AbortSignal) {
   return getJson<Job>(`/api/jobs/${encodeURIComponent(id)}`, signal);
 }
 
-export type SavedTopology = { path: string; name: string; yaml_text?: string };
+export type TopologyVersion = {
+  name: string;
+  path: string;
+  lab_id: string;
+  mtime: number;
+  has_clab_sibling: boolean;
+};
+
+export type LabSummary = {
+  id: string;
+  version_count: number;
+  latest: TopologyVersion;
+  versions: TopologyVersion[];
+};
+
+export type SavedTopology = {
+  path: string;
+  name: string;
+  lab_id?: string;
+  yaml_text?: string;
+};
+
+export type AttachMlagPair = {
+  index: number;
+  leaf_a: string;
+  leaf_b: string;
+  site: string | null;
+  label: string;
+};
+
+export type AttachMleaf = {
+  index: number;
+  name: string;
+  site: string | null;
+  mlag_pair: number | null;
+  leaf_a: string | null;
+  leaf_b: string | null;
+  label: string;
+};
+
+export type AttachTargets = {
+  mlag_pairs: AttachMlagPair[];
+  mleafs: AttachMleaf[];
+};
 
 export function extendTopology(body: Record<string, unknown>) {
   return postJson<SavedTopology>("/api/extend", body);
@@ -94,30 +137,70 @@ export function attachTopology(body: Record<string, unknown>) {
   return postJson<SavedTopology>("/api/attach", body);
 }
 
+export function listLabs() {
+  return getJson<LabSummary[]>("/api/labs");
+}
+
+export function getLab(labId: string) {
+  return getJson<LabSummary>(`/api/labs/${encodeURIComponent(labId)}`);
+}
+
 export function getTopology(name: string) {
   return getJson<SavedTopology>(`/api/topologies/${encodeURIComponent(name)}`);
 }
 
+export function deleteTopology(name: string) {
+  return fetch(`/api/topologies/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  }).then(async (response) => {
+    if (!response.ok) {
+      const payload: unknown = await response.json().catch(() => null);
+      const detail =
+        payload && typeof payload === "object" && "detail" in payload
+          ? (payload as { detail?: unknown }).detail
+          : null;
+      throw new ApiError(
+        typeof detail === "string"
+          ? detail
+          : `Request failed (${response.status})`,
+        response.status,
+      );
+    }
+    return response.json() as Promise<{ deleted: string }>;
+  });
+}
+
+export function getAttachTargets(name: string) {
+  return getJson<AttachTargets>(
+    `/api/topologies/${encodeURIComponent(name)}/attach-targets`,
+  );
+}
+
 export function previewSavedTopology(yamlText: string) {
-  return postJson<{ png_base64: string | null }>("/api/preview-from-yaml", { yaml_text: yamlText });
+  return postJson<{ png_base64: string | null }>("/api/preview-from-yaml", {
+    yaml_text: yamlText,
+  });
 }
 
 export async function loadSavedTopology(result: SavedTopology) {
   const saved = result.yaml_text ? result : await getTopology(result.name);
   if (!saved.yaml_text) throw new Error("Saved topology has no YAML");
-  let pngBase64: string | null = null;
-  try {
-    pngBase64 = (await previewSavedTopology(saved.yaml_text)).png_base64;
-  } catch {
-    // The written YAML is still usable if diagram generation fails.
-  }
+  const name = result.name || saved.name;
   return {
-    path: result.path || saved.path,
-    name: result.name || saved.name,
+    path: result.path || saved.path || null,
+    name,
+    labId: result.lab_id || saved.lab_id || labIdFromFilename(name),
     yamlText: saved.yaml_text,
-    pngBase64,
+    // SPA renders CvDiagram from YAML; Graphviz PNG is unused in the pane.
+    pngBase64: null,
     isDraft: false,
   };
+}
+
+export function labIdFromFilename(name: string): string {
+  const stem = name.replace(/\.(ya?ml)$/i, "");
+  const match = /^(.*)-(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/.exec(stem);
+  return match ? match[1] : stem;
 }
 
 export function previewTopology(body: PreviewBody, signal?: AbortSignal) {

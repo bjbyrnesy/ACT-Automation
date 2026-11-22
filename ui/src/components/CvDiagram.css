@@ -1,0 +1,181 @@
+.cv-diagram {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.cv-diagram__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.cv-diagram__toolbar button {
+  min-width: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.cv-diagram__pct {
+  min-width: 3.2em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.cv-diagram__hint {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.cv-diagram__viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  cursor: grab;
+  background: #f8fafc;
+}
+
+.cv-diagram__viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.cv-diagram__stage {
+  position: relative;
+}
+
+.cv-diagram__svg {
+  display: block;
+  user-select: none;
+}
+
+.cv-diagram__canvas {
+  fill: #f8fafc;
+}
+
+.cv-diagram__title {
+  fill: #334155;
+  font-size: 14px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  text-anchor: middle;
+  font-weight: 600;
+}
+
+.cv-diagram__site {
+  fill: #ffffff;
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  rx: 0;
+}
+
+.cv-diagram__site-label {
+  fill: #64748b;
+  font-size: 11px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+}
+
+.cv-diagram__mlag {
+  fill: rgba(100, 116, 139, 0.06);
+  stroke: #64748b;
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3;
+}
+
+.cv-diagram__mlag-label {
+  fill: #64748b;
+  font-size: 9px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  text-anchor: middle;
+  letter-spacing: 0.04em;
+}
+
+.cv-diagram__link {
+  stroke: #1e293b;
+  stroke-width: 1.4;
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.cv-diagram__link--uplink {
+  stroke: #0f766e;
+  stroke-width: 1.6;
+}
+
+.cv-diagram__link--host {
+  stroke: #0e7490;
+}
+
+.cv-diagram__link--peer {
+  stroke: #1e293b;
+  stroke-width: 1.5;
+}
+
+.cv-diagram__po {
+  fill: none;
+  stroke: #0f172a;
+  stroke-width: 1.5;
+}
+
+.cv-diagram__node {
+  stroke: #0f172a;
+  stroke-width: 1.25;
+  /* square corners — CV switch boxes */
+}
+
+.cv-diagram__node-title {
+  fill: #ffffff;
+  font-size: 10px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+.cv-diagram__node-sub {
+  fill: rgba(255, 255, 255, 0.85);
+  font-size: 9px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-style: italic;
+  text-anchor: middle;
+}
+
+.cv-diagram__port {
+  fill: #f5e6d3;
+  stroke: #1e293b;
+  stroke-width: 1;
+}
+
+.cv-diagram__port-label {
+  fill: #0f172a;
+  font-size: 9px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  text-anchor: middle;
+}
+
+.cv-diagram__empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 160px;
+  color: var(--text-muted);
+  cursor: default;
+  padding: 24px;
+  text-align: center;
+}
+
+@media (max-width: 1100px) {
+  .cv-diagram__hint {
+    display: none;
+  }
+}

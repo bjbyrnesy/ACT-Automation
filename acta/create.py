@@ -20,7 +20,7 @@ from acta.portplan import PortPlan, site_ordinal
 from acta.prompt import prompt_value
 from acta.site_names import MAX_SITES, validate_site_token
 
-DEFAULT_EOS_VERSION = "4.35.4M"
+DEFAULT_EOS_VERSION = "4.37.0F"
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$")
 
 

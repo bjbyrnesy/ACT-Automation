@@ -15,7 +15,15 @@ from acta.capacity import Capacity
 from acta.create import FabricSpec
 from acta.web.errors import WebError
 from acta.web.jobs import get_job, list_jobs
-from acta.web.labs import list_topologies, read_topology, write_topology
+from acta.web.labs import (
+    delete_topology,
+    get_lab,
+    lab_id_from_filename,
+    list_labs,
+    list_topologies,
+    read_topology,
+    write_topology,
+)
 from acta.web.preview import preview_from_spec
 from acta.web.routes_ops import router as ops_router
 from acta.web.routes_settings import router as settings_router
@@ -120,14 +128,38 @@ def create_app(*, labs_root: Path) -> FastAPI:
     def topologies() -> list[dict]:
         return list_topologies(root)
 
+    @app.get("/api/labs")
+    def labs() -> list[dict]:
+        return list_labs(root)
+
+    @app.get("/api/labs/{lab_id}")
+    def lab_get(lab_id: str) -> dict:
+        return get_lab(root, lab_id)
+
     @app.get("/api/topologies/{name}")
     def topology_get(name: str) -> dict:
         return read_topology(root, name)
 
+    @app.delete("/api/topologies/{name}")
+    def topology_delete(name: str) -> dict[str, str]:
+        delete_topology(root, name)
+        return {"deleted": name}
+
+    @app.get("/api/topologies/{name}/attach-targets")
+    def topology_attach_targets(name: str) -> dict:
+        from acta.web.attach_targets import attach_targets_from_yaml
+
+        topo = read_topology(root, name)
+        return attach_targets_from_yaml(topo["yaml_text"])
+
     @app.post("/api/topologies")
     def topology_write(body: WriteTopologyBody) -> dict[str, str]:
         path = write_topology(root, body.yaml_text, stem=body.stem)
-        return {"path": str(path), "name": path.name}
+        return {
+            "path": str(path),
+            "name": path.name,
+            "lab_id": lab_id_from_filename(path.name),
+        }
 
     @app.get("/api/jobs")
     def jobs() -> list[dict]:
@@ -160,6 +192,16 @@ def create_app(*, labs_root: Path) -> FastAPI:
 
     # Only mount SPA when a real build is present (avoid catching /api via .gitkeep).
     if (_STATIC_DIR / "index.html").is_file():
+        # Keep index.html (and SPA HTML fallbacks) uncached so restarts pick up
+        # new hashed asset filenames. Hashed /assets/* can stay cacheable.
+        @app.middleware("http")
+        async def _spa_html_no_cache(request: Request, call_next):  # type: ignore[no-untyped-def]
+            response = await call_next(request)
+            content_type = response.headers.get("content-type", "")
+            if "text/html" in content_type:
+                response.headers["Cache-Control"] = "no-store"
+            return response
+
         app.mount(
             "/",
             StaticFiles(directory=_STATIC_DIR, html=True),

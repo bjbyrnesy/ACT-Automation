@@ -8,7 +8,15 @@ from pathlib import Path
 import pytest
 
 from acta.web.errors import WebError
-from acta.web.labs import list_topologies, read_topology, write_topology
+from acta.web.labs import (
+    delete_topology,
+    get_lab,
+    lab_id_from_filename,
+    list_labs,
+    list_topologies,
+    read_topology,
+    write_topology,
+)
 
 
 def test_list_topologies_filters_yaml_and_marks_clab_siblings(tmp_path: Path) -> None:
@@ -25,6 +33,7 @@ def test_list_topologies_filters_yaml_and_marks_clab_siblings(tmp_path: Path) ->
     assert listed[0] == {
         "name": "fabric.yml",
         "path": str(act),
+        "lab_id": "fabric",
         "mtime": act.stat().st_mtime,
         "has_clab_sibling": True,
     }
@@ -41,6 +50,8 @@ def test_write_then_read_uses_basename_and_preserves_text(tmp_path: Path) -> Non
     assert read_topology(tmp_path, path.name) == {
         "yaml_text": yaml_text,
         "path": str(path),
+        "name": path.name,
+        "lab_id": "fabric",
     }
     assert [entry["name"] for entry in list_topologies(tmp_path)] == [path.name]
 
@@ -91,3 +102,40 @@ def test_write_rejects_unsafe_stem(tmp_path: Path, stem: str) -> None:
         write_topology(tmp_path, "nodes: {}\n", stem=stem)
 
     assert raised.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("name", "lab_id"),
+    [
+        ("fabric.yml", "fabric"),
+        ("fabric-2026-11-21.yml", "fabric"),
+        ("fabric-2026-11-21-2.yml", "fabric"),
+        ("topology-blz3-2026-11-20.yml", "topology-blz3"),
+    ],
+)
+def test_lab_id_from_filename(name: str, lab_id: str) -> None:
+    assert lab_id_from_filename(name) == lab_id
+
+
+def test_list_labs_groups_versions(tmp_path: Path) -> None:
+    import os
+
+    first = write_topology(tmp_path, "nodes:\n  a: {}\n", stem="blz")
+    older = tmp_path / "blz-2020-01-01.yml"
+    older.write_text("nodes:\n  b: {}\n", encoding="utf-8")
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(first, (2_000_000, 2_000_000))
+
+    labs = list_labs(tmp_path)
+    assert len(labs) == 1
+    assert labs[0]["id"] == "blz"
+    assert labs[0]["version_count"] == 2
+    assert labs[0]["latest"]["name"] == first.name
+    assert get_lab(tmp_path, "blz")["id"] == "blz"
+
+
+def test_delete_topology_removes_file(tmp_path: Path) -> None:
+    path = write_topology(tmp_path, "nodes:\n  a: {}\n", stem="blz")
+    delete_topology(tmp_path, path.name)
+    assert not path.exists()
+    assert list_labs(tmp_path) == []

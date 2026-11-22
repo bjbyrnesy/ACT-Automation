@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { ThemePicker } from "../theme/ThemePicker";
 
 type Settings = {
   CLAB_HOST: string;
@@ -245,6 +246,7 @@ export function SettingsPage() {
             />
           </label>
         </fieldset>
+        <ThemePicker />
         <fieldset>
           <legend>Preview</legend>
           <label className="settings-form__check">
@@ -267,7 +269,7 @@ export function SettingsPage() {
             />
           </label>
         </fieldset>
-        <button type="submit" disabled={saving}>
+        <button type="submit" className="btn-primary" disabled={saving}>
           {saving ? "Saving…" : "Save settings"}
         </button>
       </form>

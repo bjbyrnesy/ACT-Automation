@@ -45,4 +45,5 @@ export interface WriteTopologyBody {
 export interface WriteTopologyResult {
   path: string;
   name: string;
+  lab_id: string;
 }

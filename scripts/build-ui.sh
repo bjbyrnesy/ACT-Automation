@@ -16,8 +16,18 @@ npm ci
 npm run build
 
 mkdir -p "${STATIC_DIR}"
-# Replace previous build artifacts; keep directory itself.
-find "${STATIC_DIR}" -mindepth 1 -maxdepth 1 ! -name '.gitkeep' -exec rm -rf {} +
+# Clear previous build (do not use `find` — interactive shells often alias it to fd).
+python3 - <<'PY' "${STATIC_DIR}"
+import pathlib, shutil, sys
+static = pathlib.Path(sys.argv[1])
+for child in static.iterdir():
+    if child.name == ".gitkeep":
+        continue
+    if child.is_dir() and not child.is_symlink():
+        shutil.rmtree(child)
+    else:
+        child.unlink(missing_ok=True)
+PY
 cp -R "${UI_DIR}/dist/." "${STATIC_DIR}/"
 
 printf 'UI built → %s/index.html\n' "${STATIC_DIR}"

@@ -87,18 +87,33 @@ Clab host may be local or remote via Settings / `CLAB_HOST`. No SSH-in-UI.
 Graphviz `dot` required for PNG preview.
 
 ```bash
-uv sync --extra ui --extra dev
-# first time / after ui/ changes:
+# One-shot (preferred — keeps sync + build + serve on one argv):
+bash scripts/serve-ui.sh
+# optional flags pass through: bash scripts/serve-ui.sh --no-open --root /path/to/labs
+```
+
+Or step by step (keep `uv run …` on **one** line — a break after `uv` runs bare `uv` help):
+
+```bash
+uv sync --extra ui
 bash scripts/build-ui.sh
-acta serve                 # alias: acta ui
-# optional: acta serve --no-open --root /path/to/labs
+uv run acta serve            # or: .venv/bin/acta serve
+```
+
+You should see:
+
+```text
+ACTA Web UI listening on http://127.0.0.1:8765/
+Labs root: …
+Press Ctrl-C to stop.
+INFO:     Uvicorn running on http://127.0.0.1:8765 …
 ```
 
 Dev (Vite hot reload, API still via `acta serve`):
 
 ```bash
 # Terminal 1
-acta serve --no-open
+bash scripts/serve-ui.sh --no-open
 # Terminal 2
 cd ui && npm ci && npm run dev   # proxies /api → :8765
 ```

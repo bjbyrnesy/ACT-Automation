@@ -2,25 +2,34 @@ import { Outlet, useLocation } from "react-router-dom";
 import { TopologyPane } from "../components/TopologyPane";
 import { LeftNav } from "./LeftNav";
 import { TopBar } from "./TopBar";
-import { TwoPane } from "./TwoPane";
 import "./AppShell.css";
 
+function showTopologyPane(pathname: string): boolean {
+  if (pathname === "/new" || pathname.startsWith("/new/")) return true;
+  if (pathname.startsWith("/labs/")) return true;
+  return false;
+}
+
 export function AppShell() {
-  const location = useLocation();
+  const { pathname } = useLocation();
+  const pane = showTopologyPane(pathname);
+
   return (
     <div className="app-shell">
       <LeftNav />
       <div className="app-shell__main">
         <TopBar />
-        <div className="app-shell__content">
+        <div
+          className={
+            pane
+              ? "app-shell__content"
+              : "app-shell__content app-shell__content--solo"
+          }
+        >
           <header className="app-shell__page-head">
             <Outlet />
           </header>
-          {location.pathname === "/create" || location.pathname === "/show" ? (
-            <TopologyPane />
-          ) : (
-            <TwoPane />
-          )}
+          {pane ? <TopologyPane /> : null}
         </div>
       </div>
     </div>

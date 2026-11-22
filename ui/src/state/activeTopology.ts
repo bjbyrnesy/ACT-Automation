@@ -10,6 +10,7 @@ import {
 export type ActiveTopology = {
   path: string | null;
   name: string | null;
+  labId: string | null;
   yamlText: string;
   pngBase64: string | null;
   isDraft: boolean;
@@ -24,6 +25,7 @@ type ActiveTopologyContextValue = {
 const EMPTY: ActiveTopology = {
   path: null,
   name: null,
+  labId: null,
   yamlText: "",
   pngBase64: null,
   isDraft: false,

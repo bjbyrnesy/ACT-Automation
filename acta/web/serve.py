@@ -31,7 +31,9 @@ def run_serve(
     root = (labs_root or Path.cwd()).resolve()
     app = create_app(labs_root=root)
     url = f"http://{bind}:{port}/"
-    print(f"ACTA Web UI: {url}  (Ctrl-C to stop)", flush=True)
+    print(f"ACTA Web UI listening on {url}", flush=True)
+    print(f"Labs root: {root}", flush=True)
+    print("Press Ctrl-C to stop.", flush=True)
     if open_browser:
 
         def _open() -> None:
@@ -39,4 +41,5 @@ def run_serve(
             webbrowser.open(url)
 
         threading.Thread(target=_open, daemon=True).start()
-    uvicorn.run(app, host=bind, port=port, log_level="info")
+    # factory=False: pass the app instance; log startup so the TTY shows "running"
+    uvicorn.run(app, host=bind, port=port, log_level="info", access_log=True)

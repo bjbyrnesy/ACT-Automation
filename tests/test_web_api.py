@@ -96,6 +96,44 @@ def test_preview_rejects_invalid_spec(tmp_path: Path) -> None:
     assert "detail" in response.json()
 
 
+def test_attach_targets_lists_labeled_mlag_pairs(tmp_path: Path) -> None:
+    client = TestClient(create_app(labs_root=tmp_path))
+    payload = _preview_payload()
+    payload["capacity"] = {
+        **payload["capacity"],
+        "leaves": 4,
+        "max_leaves": 8,
+    }
+    payload["dc_count"] = 2
+    payload["sites"] = ["msp", "mso"]
+    payload["member_leaf_pairs"] = [1]
+    payload["member_leaves_per_pair"] = 1
+    payload["capacity"]["max_mleafs_per_pair"] = 2
+    preview = client.post("/api/preview", json=payload)
+    assert preview.status_code == 200, preview.text
+    written = client.post(
+        "/api/topologies",
+        json={"yaml_text": preview.json()["yaml_text"], "stem": "multisite"},
+    )
+    assert written.status_code == 200, written.text
+    name = written.json()["name"]
+
+    targets = client.get(f"/api/topologies/{name}/attach-targets")
+    assert targets.status_code == 200, targets.text
+    body = targets.json()
+    assert len(body["mlag_pairs"]) >= 2
+    first = body["mlag_pairs"][0]
+    assert first["index"] == 1
+    assert first["site"] in {"msp", "mso"}
+    assert f"Site {first['site']}" in first["label"]
+    assert "↔" in first["label"]
+    sites = {pair["site"] for pair in body["mlag_pairs"]}
+    assert {"msp", "mso"} <= sites
+    assert body["mleafs"]
+    assert body["mleafs"][0]["index"] == 1
+    assert "mleaf" in body["mleafs"][0]["label"]
+
+
 def test_jobs_list_and_get(tmp_path: Path) -> None:
     client = TestClient(create_app(labs_root=tmp_path))
     job = submit_job("test.noop", lambda: None)
