@@ -57,6 +57,9 @@ After activate, `acta` is on `PATH` (or use `python acta.py`). Optional:
 `pre-commit install --install-hooks`. Graphviz `dot` is optional for PNG diagrams
 (`brew install graphviz`). Never commit `.config` or `.env`.
 
+For the **Web UI**, also install **Node.js 20+** (`npm` on `PATH`) so
+`scripts/build-ui.sh` can build the React SPA.
+
 ## Quickstart
 
 ```bash
@@ -79,25 +82,42 @@ acta ssh A-leaf1 -- show hostname
 acta clab redeploy mylab.clab.yml        # after attach/extend
 ```
 
-### Web UI (local)
+## Web UI
 
-Localhost ops console (Create → Graphviz preview → Write, Labs/Show, Extend,
-Attach, Clab/ACT jobs, Settings). Binds **127.0.0.1:8765** and opens a browser.
-Clab host may be local or remote via Settings / `CLAB_HOST`. No SSH-in-UI.
-Graphviz `dot` required for PNG preview.
+Localhost ops console for Create / Labs / Extend / Attach / jobs / Settings, with a
+live **CV-style topology diagram** (zoom, loupe, host rails). Binds
+**127.0.0.1:8765** only and opens a browser. Clab host may be local or remote via
+Settings / `CLAB_HOST`. No SSH-in-UI.
+
+### Run it (preferred)
+
+From the repo root, with `uv` and Node/`npm` installed:
 
 ```bash
-# One-shot (preferred — keeps sync + build + serve on one argv):
 bash scripts/serve-ui.sh
-# optional flags pass through: bash scripts/serve-ui.sh --no-open --root /path/to/labs
 ```
 
-Or step by step (keep `uv run …` on **one** line — a break after `uv` runs bare `uv` help):
+That syncs the `ui` extra, builds the SPA into `acta/web/static/`, and runs
+`acta serve`. Open **http://127.0.0.1:8765/** (the script also tries to open a
+browser). Stop with Ctrl-C.
+
+Flags pass through to `acta serve`:
+
+```bash
+bash scripts/serve-ui.sh --no-open              # do not open a browser
+bash scripts/serve-ui.sh --port 9000            # alternate port
+bash scripts/serve-ui.sh --root /path/to/labs   # labs directory
+```
+
+### Run it step by step
+
+Keep each `uv …` invocation on **one** line (a break after `uv` runs bare `uv` help):
 
 ```bash
 uv sync --extra ui
 bash scripts/build-ui.sh
 uv run acta serve            # or: .venv/bin/acta serve
+# aliases: acta ui
 ```
 
 You should see:
@@ -109,14 +129,22 @@ Press Ctrl-C to stop.
 INFO:     Uvicorn running on http://127.0.0.1:8765 …
 ```
 
-Dev (Vite hot reload, API still via `acta serve`):
+Rebuild the SPA whenever `ui/` changes (`bash scripts/build-ui.sh`), or use the
+one-shot script again.
+
+### Frontend dev (hot reload)
+
+API still comes from `acta serve`; Vite proxies `/api` → `:8765`.
 
 ```bash
-# Terminal 1
+# Terminal 1 — API + built static (or API only after a prior build)
 bash scripts/serve-ui.sh --no-open
-# Terminal 2
-cd ui && npm ci && npm run dev   # proxies /api → :8765
+
+# Terminal 2 — Vite on :5173
+cd ui && npm ci && npm run dev
 ```
+
+Then use the Vite URL printed in the terminal (typically http://127.0.0.1:5173/).
 
 ---
 
