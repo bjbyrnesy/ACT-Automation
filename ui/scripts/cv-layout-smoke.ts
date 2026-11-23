@@ -36,10 +36,12 @@ assert(
 
 const host = lay.nodes.find((n) => n.name === "bar");
 assert(host, "missing host bar");
+const hostMid = host.x + host.w / 2;
 assert(
-  Math.abs(host.x - mleaf.x) < 0.5,
-  `host not under mleaf (${host.x} vs ${mleaf.x})`,
+  Math.abs(hostMid - mMid) < 0.5,
+  `host not centered under mleaf (${hostMid} vs ${mMid})`,
 );
+assert(host.w < mleaf.w, `expected narrow host width, got ${host.w}`);
 
 const mlag = lay.domains.filter((d) => d.kind === "mlag");
 assert(mlag.length >= 1, "expected MLAG domains");
