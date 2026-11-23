@@ -65,6 +65,45 @@ assert(
 );
 const fooPo = lay.bundles.find((b) => b.id === "po-host-foo");
 assert(fooPo, "expected Po bundle for dual-homed foo");
+assert(
+  fooPo.rx > fooPo.ry,
+  `dual-home Po should be horizontal (rx>ry), got rx=${fooPo.rx} ry=${fooPo.ry}`,
+);
+
+// With an mleaf + mleaf-rail host (foobar), dual-home foo sits below the rail.
+const foobar = lay.nodes.find((n) => n.name === "foobar");
+assert(foobar, "missing host foobar");
+assert(
+  foo.y >= foobar.y + foobar.h,
+  `dual-home foo should sit below single-attached foobar (${foo.y} vs ${foobar.y}+${foobar.h})`,
+);
+
+// Dual-home legs must not cut through the mleaf box (segment sample).
+const aMleaf = lay.nodes.find((n) => n.name.includes("A-mleaf1"));
+assert(aMleaf, "missing A-mleaf1");
+const fooLinks = lay.links.filter(
+  (l) => l.aName === "foo" || l.bName === "foo",
+);
+assert(fooLinks.length === 2, "foo should have two access links");
+for (const link of fooLinks) {
+  for (let i = 1; i < link.points.length; i += 1) {
+    const a = link.points[i - 1];
+    const b = link.points[i];
+    for (const t of [0.25, 0.5, 0.75]) {
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      const inside =
+        x >= aMleaf.x &&
+        x <= aMleaf.x + aMleaf.w &&
+        y >= aMleaf.y &&
+        y <= aMleaf.y + aMleaf.h;
+      assert(
+        !inside,
+        `foo link segment crosses A-mleaf1 at (${x.toFixed(1)},${y.toFixed(1)})`,
+      );
+    }
+  }
+}
 
 // Host rails must not cover leaf↔mleaf uplink elbows on the same face.
 for (const node of lay.nodes) {

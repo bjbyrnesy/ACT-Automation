@@ -578,9 +578,10 @@ function leafPairBoundsForColumn(
 /**
  * Place hosts below fabric — never level with mleafs.
  *
- * - Dual-homed to both leaves of an MLAG pair → pair centerline stack (Po).
- * - Single-homed to one leaf → under that leaf (side by leaf seat, not port parity).
- * - Single-homed to an mleaf → odd/even side rails of the mleaf column.
+ * - Single-homed to an mleaf → odd/even side rails (first).
+ * - Single-homed to one leaf → under that leaf seat.
+ * - Dual-homed to an MLAG pair → pair centerline, stacked *below* any
+ *   single-attached hosts on that pair so Po legs clear the rails.
  */
 function placeHostsUnderParents(
   hosts: TopologyNode[],
@@ -669,45 +670,26 @@ function placeHostsUnderParents(
     return list.length ? y - HOST_H_GAP + NODE_H : startY;
   };
 
-  // 1) MLAG dual-homes on the pair centerline, below mleafs.
-  for (const group of dualByPair.values()) {
-    const lp = positions.get(group.left);
-    const rp = positions.get(group.right);
-    if (!lp || !rp) continue;
-    const cx = (lp.x + rp.x + NODE_W) / 2;
-    const startY =
-      pairColumnBottom(group.left, group.right, positions, byName) + HOST_DROP;
-    maxBottom = Math.max(
-      maxBottom,
-      stackCentered(sortNodes(group.hosts), cx, startY),
-    );
-  }
+  /** Lowest Y already used by hosts inside an MLAG pair's horizontal span. */
+  const pairPlacedHostBottom = (left: string, right: string): number => {
+    const lp = positions.get(left);
+    const rp = positions.get(right);
+    if (!lp || !rp) return 0;
+    const L = Math.min(lp.x, rp.x);
+    const R = Math.max(lp.x, rp.x) + NODE_W;
+    let bottom = 0;
+    for (const [name, pos] of positions) {
+      const node = byName[name];
+      if (!node || !isHostRole(node.role)) continue;
+      const mid = pos.x + HOST_W / 2;
+      if (mid >= L - 1 && mid <= R + 1) {
+        bottom = Math.max(bottom, pos.y + NODE_H);
+      }
+    }
+    return bottom;
+  };
 
-  // 2) Single-home to a leaf: sit under that leaf (left/right by leaf seat).
-  for (const [leafName, list] of leafSingles) {
-    const leafPos = positions.get(leafName);
-    if (!leafPos) continue;
-    const mate = mates.get(leafName);
-    const startY = mate
-      ? pairColumnBottom(
-          leafPos.x <= (positions.get(mate)?.x ?? leafPos.x)
-            ? leafName
-            : mate,
-          leafPos.x <= (positions.get(mate)?.x ?? leafPos.x)
-            ? mate
-            : leafName,
-          positions,
-          byName,
-        ) + HOST_DROP
-      : columnFabricBottom(leafPos, positions, byName) + HOST_DROP;
-    const cx = leafPos.x + NODE_W / 2;
-    maxBottom = Math.max(
-      maxBottom,
-      stackCentered(sortNodes(list), cx, startY),
-    );
-  }
-
-  // 3) Single-home to an mleaf: odd → left rail, even → right rail.
+  // 1) Single-home to an mleaf: odd → left rail, even → right rail.
   type MleafCol = {
     parent: string;
     colX: number;
@@ -765,6 +747,47 @@ function placeHostsUnderParents(
         pairRight - HOST_W,
         startY,
       ),
+    );
+  }
+
+  // 2) Single-home to a leaf: sit under that leaf (left/right by leaf seat).
+  for (const [leafName, list] of leafSingles) {
+    const leafPos = positions.get(leafName);
+    if (!leafPos) continue;
+    const mate = mates.get(leafName);
+    const startY = mate
+      ? pairColumnBottom(
+          leafPos.x <= (positions.get(mate)?.x ?? leafPos.x)
+            ? leafName
+            : mate,
+          leafPos.x <= (positions.get(mate)?.x ?? leafPos.x)
+            ? mate
+            : leafName,
+          positions,
+          byName,
+        ) + HOST_DROP
+      : columnFabricBottom(leafPos, positions, byName) + HOST_DROP;
+    const cx = leafPos.x + NODE_W / 2;
+    maxBottom = Math.max(
+      maxBottom,
+      stackCentered(sortNodes(list), cx, startY),
+    );
+  }
+
+  // 3) MLAG dual-homes on the pair centerline — below singles on that pair.
+  for (const group of dualByPair.values()) {
+    const lp = positions.get(group.left);
+    const rp = positions.get(group.right);
+    if (!lp || !rp) continue;
+    const cx = (lp.x + rp.x + NODE_W) / 2;
+    const fabricBottom =
+      pairColumnBottom(group.left, group.right, positions, byName) + HOST_DROP;
+    const singlesBottom =
+      pairPlacedHostBottom(group.left, group.right) + HOST_H_GAP;
+    const startY = Math.max(fabricBottom, singlesBottom);
+    maxBottom = Math.max(
+      maxBottom,
+      stackCentered(sortNodes(group.hosts), cx, startY),
     );
   }
 
@@ -1543,10 +1566,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         y: hostPos.y - PORT_H,
       };
       const leafPos = parentPos;
+      // Attach on the *outer* bottom of each leaf so verticals clear the
+      // centered mleaf column instead of dropping through it.
       const parentAnchor = {
         x: isLeft
-          ? leafPos.x + NODE_W - PORT_W - 4
-          : leafPos.x + 4,
+          ? leafPos.x + 4
+          : leafPos.x + NODE_W - PORT_W - 4,
         y: leafPos.y + NODE_H,
       };
 
@@ -1570,13 +1595,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const parentFace = outerAttach(parentAnchor, "bottom");
       const parentStub = stubFrom(parentFace, "bottom");
       const hostFace = outerAttach(hostAnchor, "top");
-      // Drop past any mleaf stack, meet on the centerline (Po), then into the
-      // host — legs stay side-local and do not cross.
       const pairCx =
         ((positions.get(leftLeaf)?.x ?? 0) +
           (positions.get(rightLeaf)?.x ?? 0) +
           NODE_W) /
         2;
+      // Gap under the mleaf stack (pairColumnBottom includes mleafs).
       const clearY = Math.min(
         hostFace.y - 8,
         Math.max(
@@ -1584,14 +1608,21 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           pairColumnBottom(leftLeaf, rightLeaf, positions, byName) + 10,
         ),
       );
-      const path = [
-        parentFace,
-        parentStub,
-        { x: parentStub.x, y: clearY },
+      // Keep the drop outside the centered mleaf footprint.
+      const mleafHalf = NODE_W / 2 + 10;
+      const bypassX = isLeft
+        ? Math.min(parentStub.x, pairCx - mleafHalf)
+        : Math.max(parentStub.x, pairCx + mleafHalf);
+      const path: LaidPoint[] = [parentFace, parentStub];
+      if (Math.abs(bypassX - parentStub.x) >= 2) {
+        path.push({ x: bypassX, y: parentStub.y });
+      }
+      path.push(
+        { x: bypassX, y: clearY },
         { x: isLeft ? pairCx - 6 : pairCx + 6, y: clearY },
         { x: hostFace.x, y: clearY },
         hostFace,
-      ];
+      );
       linkEndpoints.set(id, path);
       let po = dualHomePo.find((p) => p.host === hostNode.name);
       if (!po) {
@@ -1840,23 +1871,32 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     });
   }
 
-  // Dual-homed host ↔ MLAG leaf pair: Po mark on the centerline join.
+  // Dual-homed host ↔ MLAG leaf pair: horizontal Po around the vertical stubs.
   for (const po of dualHomePo) {
     if (po.paths.length < 2) continue;
-    const joins = po.paths.map((pts) => {
-      // Join point is the third vertex (centerline meeting).
-      const p = pts[Math.min(2, pts.length - 1)];
-      return p;
+    const stubs = po.paths.map((pts) => {
+      const hostPt = pts[pts.length - 1];
+      const above = pts[pts.length - 2] ?? hostPt;
+      return {
+        x: hostPt.x,
+        y0: Math.min(above.y, hostPt.y),
+        y1: Math.max(above.y, hostPt.y),
+      };
     });
-    const cx = joins.reduce((s, p) => s + p.x, 0) / joins.length;
-    const cy = joins.reduce((s, p) => s + p.y, 0) / joins.length;
+    const minX = Math.min(...stubs.map((s) => s.x));
+    const maxX = Math.max(...stubs.map((s) => s.x));
+    const minY = Math.min(...stubs.map((s) => s.y0));
+    const maxY = Math.max(...stubs.map((s) => s.y1));
+    const stubSpanX = Math.max(PORT_W, maxX - minX);
+    const stubSpanY = Math.max(10, maxY - minY);
+    // Long axis horizontal — wrap both vertical stubs, centered on their length.
     bundles.push({
       id: `po-host-${po.host}`,
-      cx,
-      cy,
-      rx: 8,
-      ry: 14,
-      vertical: true,
+      cx: (minX + maxX) / 2,
+      cy: (minY + maxY) / 2,
+      rx: stubSpanX / 2 + 12,
+      ry: Math.max(6, Math.min(stubSpanY / 2 + 2, stubSpanX / 3)),
+      vertical: false,
     });
   }
 
