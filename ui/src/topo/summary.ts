@@ -1,6 +1,6 @@
 /** Client-side inventory parsed from ACT topology YAML. */
 
-export type NodeRole = "bb" | "border" | "spine" | "leaf" | "mleaf" | "other";
+export type NodeRole = "bb" | "border" | "spine" | "leaf" | "mleaf" | "host";
 
 export type TopologyNode = {
   name: string;
@@ -21,7 +21,7 @@ export type TopologySummary = {
   byRole: Record<NodeRole, number>;
 };
 
-const ROLE_ORDER: NodeRole[] = ["bb", "border", "spine", "leaf", "mleaf", "other"];
+const ROLE_ORDER: NodeRole[] = ["bb", "border", "spine", "leaf", "mleaf", "host"];
 
 const NODE_KEY_RE = /^ {2}- ([A-Za-z0-9][\w.-]*):\s*$/;
 const MODE_RE = /^# capacity:.*\bfabric_mode=(\S+)/m;
@@ -47,11 +47,11 @@ function classify(name: string): { role: NodeRole; site: string | null } {
   if (single?.groups) {
     return { role: single.groups.role as NodeRole, site: null };
   }
-  return { role: "other", site: null };
+  return { role: "host", site: null };
 }
 
 function emptyRoleCounts(): Record<NodeRole, number> {
-  return { bb: 0, border: 0, spine: 0, leaf: 0, mleaf: 0, other: 0 };
+  return { bb: 0, border: 0, spine: 0, leaf: 0, mleaf: 0, host: 0 };
 }
 
 /** Parse ACT YAML into a compact inventory for the workspace pane. */
@@ -162,7 +162,73 @@ export function roleLabel(role: NodeRole): string {
       return "backbone";
     case "mleaf":
       return "member leaf";
+    case "host":
+      return "host";
     default:
       return role;
   }
+}
+
+/**
+ * Assign site letters to hosts from fabric peers (same rule as acta.diagram).
+ * Mutates ``nodes`` in place and rebuilds ``bySite`` / ``sites``.
+ */
+export function assignHostSites(
+  nodes: TopologyNode[],
+  links: Array<{ aNode: string; bNode: string }>,
+): void {
+  const byName: Record<string, TopologyNode> = {};
+  for (const node of nodes) byName[node.name] = node;
+
+  for (const node of nodes) {
+    if (node.role !== "host" || node.site) continue;
+    const peerSites = new Set<string>();
+    for (const link of links) {
+      const other =
+        link.aNode === node.name
+          ? link.bNode
+          : link.bNode === node.name
+            ? link.aNode
+            : null;
+      if (!other) continue;
+      const peer = byName[other];
+      if (peer?.site) peerSites.add(peer.site);
+    }
+    if (peerSites.size === 1) {
+      node.site = [...peerSites][0];
+    }
+  }
+}
+
+/** Rebuild site buckets after host site assignment. */
+export function rebuildSiteIndex(summary: TopologySummary): void {
+  const bySite: Record<string, TopologyNode[]> = {};
+  const siteSet = new Set<string>();
+  const byRole = emptyRoleCounts();
+
+  for (const node of summary.nodes) {
+    byRole[node.role] += 1;
+    const bucket = node.site ?? (node.role === "bb" ? "core" : "fabric");
+    siteSet.add(bucket);
+    (bySite[bucket] ??= []).push(node);
+  }
+
+  const sites = [...siteSet].sort((a, b) => {
+    if (a === "core") return -1;
+    if (b === "core") return 1;
+    if (a === "fabric") return 1;
+    if (b === "fabric") return -1;
+    return a.localeCompare(b);
+  });
+
+  for (const site of sites) {
+    bySite[site].sort((a, b) => {
+      const ri = ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role);
+      return ri !== 0 ? ri : a.name.localeCompare(b.name);
+    });
+  }
+
+  summary.bySite = bySite;
+  summary.sites = sites;
+  summary.byRole = byRole;
 }

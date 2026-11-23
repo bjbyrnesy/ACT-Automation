@@ -19,7 +19,7 @@ const ROLE_FILL: Record<NodeRole, string> = {
   spine: "#1d4ed8",
   leaf: "#2563eb",
   mleaf: "#7c3aed",
-  other: "#0e7490",
+  host: "#c2410c",
 };
 
 export function CvDiagram({
@@ -271,8 +271,13 @@ function SvgCanvas({ layout, zoom }: { layout: CvLayout; zoom: number }) {
             y={node.y}
             width={node.w}
             height={node.h}
+            rx={node.role === "host" ? 6 : 0}
             fill={ROLE_FILL[node.role]}
-            className="cv-diagram__node"
+            className={
+              node.role === "host"
+                ? "cv-diagram__node cv-diagram__node--host"
+                : "cv-diagram__node"
+            }
           />
           <text
             x={node.x + node.w / 2}
