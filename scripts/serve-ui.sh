@@ -7,6 +7,7 @@ cd "${ROOT}"
 
 command -v uv >/dev/null 2>&1 || {
   printf 'Error: uv required\n' >&2
+  printf 'Install everything with: bash scripts/install-deps.sh\n' >&2
   exit 1
 }
 
