@@ -65,6 +65,18 @@ assert(
 );
 const fooPo = lay.bundles.find((b) => b.id === "po-host-foo");
 assert(fooPo, "expected Po bundle for dual-homed foo");
+assert(
+  fooPo.rx > fooPo.ry,
+  `dual-home Po should be horizontal (rx>ry), got rx=${fooPo.rx} ry=${fooPo.ry}`,
+);
+
+// With an mleaf + mleaf-rail host (foobar), dual-home foo sits below the rail.
+const foobar = lay.nodes.find((n) => n.name === "foobar");
+assert(foobar, "missing host foobar");
+assert(
+  foo.y >= foobar.y + foobar.h,
+  `dual-home foo should sit below single-attached foobar (${foo.y} vs ${foobar.y}+${foobar.h})`,
+);
 
 // Dual-home legs must not cut through the mleaf box (segment sample).
 const aMleaf = lay.nodes.find((n) => n.name.includes("A-mleaf1"));
