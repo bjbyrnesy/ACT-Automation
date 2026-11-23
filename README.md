@@ -73,7 +73,7 @@ Prefer the step-by-step sections below when you want full control.
 | --- | --- | --- | --- |
 | **Python** | **3.15+** | CLI, tests, Web API | Runtime for `acta` |
 | **uv** | current | Install / venv / lockfile | Prefer over pip |
-| **Node.js + npm** | **20+** | Web UI SPA build (`build-ui.sh`, Vite) | Not provided by `uv` |
+| **Node.js + npm** | **20+** | Web UI SPA build (`scripts/build-ui.sh`, Vite) | Not provided by `uv`; see [Rebuild the SPA](#rebuild-the-spa-build-uish) |
 | **Graphviz** (`dot`) | any recent | Optional PNG from `acta show` | Not needed for the live CV diagram in the Web UI |
 | **Podman** (or Docker) | recent | `clab deploy` / `ssh` / onboard exec | Default runtime is Podman |
 | **containerlab** | recent | Clab deploy path | On the lab host (`CLAB_HOST` may be remote) |
@@ -291,8 +291,31 @@ Press Ctrl-C to stop.
 INFO:     Uvicorn running on http://127.0.0.1:8765 …
 ```
 
-Rebuild the SPA whenever `ui/` changes (`bash scripts/build-ui.sh`), or use the
-one-shot script again.
+### Rebuild the SPA (`build-ui.sh`)
+
+Whenever `ui/` changes (or after a fresh clone without built assets), from the
+repo root:
+
+```bash
+bash scripts/build-ui.sh
+```
+
+This runs `npm ci` + `npm run build` in `ui/`, then copies `ui/dist/` into
+`acta/web/static/` for `acta serve`. A successful run ends with:
+
+```text
+✓ built in …ms
+UI built → …/ACT-Automation/acta/web/static/index.html
+Serve with: bash scripts/serve-ui.sh   (or: uv run acta serve)
+```
+
+Harmless npm noise you can ignore if that final line appears: funding messages,
+“New major version of npm available”, and (on older checkouts) an
+`install-scripts` / `fsevents` allowScripts notice. The repo’s `ui/package.json`
+already approves `fsevents@2.3.3` for npm 11+ script policy.
+
+`scripts/install-deps.sh` and `scripts/serve-ui.sh` both call `build-ui.sh` for
+you; use it alone when you only need to refresh static assets.
 
 ### Frontend dev (hot reload)
 

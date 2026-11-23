@@ -32,7 +32,9 @@ ensure_npm() {
 ensure_npm
 
 cd "${UI_DIR}"
-npm ci
+# Quiet funding / update-nag noise; allowScripts for fsevents lives in package.json.
+export NPM_CONFIG_UPDATE_NOTIFIER=false
+npm ci --no-fund --no-audit
 npm run build
 
 mkdir -p "${STATIC_DIR}"
@@ -50,4 +52,5 @@ for child in static.iterdir():
 PY
 cp -R "${UI_DIR}/dist/." "${STATIC_DIR}/"
 
-printf 'UI built → %s/index.html\n' "${STATIC_DIR}"
+printf '\nUI built → %s/index.html\n' "${STATIC_DIR}"
+printf 'Serve with: bash scripts/serve-ui.sh   (or: uv run acta serve)\n'
