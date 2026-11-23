@@ -70,7 +70,9 @@ clab-*/
 # ---------------------------------------------------------------------------
 # Local scratch (agents, research, parallel-buckets)
 # ---------------------------------------------------------------------------
-.cursor/
+# Allow shared project MCP; keep other .cursor/* local
+.cursor/*
+!.cursor/mcp.json
 docs/research/
 parallel-buckets.local.yaml
 *.local.yaml
