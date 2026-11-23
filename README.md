@@ -11,8 +11,8 @@ acta.py show | attach | ssh                              # day-2 (both platforms
 acta.py serve | ui                                       # local Web UI (127.0.0.1)
 ```
 
-Examples assume an activated venv (see [Install](#install)). Use `acta …` or
-`python acta.py …`.
+Examples assume an activated venv (see [Install](#install) — or
+`bash scripts/install-deps.sh`). Use `acta …` or `python acta.py …`.
 
 ## Why this exists
 
@@ -32,6 +32,40 @@ topology.
 ## Install
 
 Everything you need lives in this section. Later chapters only point here.
+
+### One-shot installer (simplest)
+
+From the repo root on **macOS** or **Linux** (Windows: use WSL2, then the same):
+
+```bash
+bash scripts/install-deps.sh
+```
+
+That installs missing host tools (**uv**, **Node.js**, **Graphviz**), ensures
+Python 3.15+ via uv, runs `uv sync --extra dev`, and builds the Web UI SPA into
+`acta/web/static/`.
+
+Useful flags:
+
+```bash
+bash scripts/install-deps.sh --with-clab   # also Podman + containerlab install hint
+bash scripts/install-deps.sh --hooks       # pre-commit install --install-hooks
+bash scripts/install-deps.sh --ui-only     # leaner: uv sync --extra ui
+bash scripts/install-deps.sh --no-graphviz # skip dot (live Web UI diagram does not need it)
+bash scripts/install-deps.sh --help
+```
+
+Then:
+
+```bash
+source .venv/bin/activate
+bash scripts/serve-ui.sh                   # http://127.0.0.1:8765/
+```
+
+Homebrew is required on macOS for Node/Graphviz/Podman packages. The script will
+not install Homebrew itself — see https://brew.sh if `brew` is missing.
+
+Prefer the step-by-step sections below when you want full control.
 
 ### Dependency matrix
 
@@ -170,12 +204,18 @@ pre-commit install --install-hooks
 ### Quick verify
 
 ```bash
-python3 --version    # ≥ 3.15
+python3 --version    # ≥ 3.15 (or: uv run python --version)
 uv --version
 node -v && npm -v    # ≥ 20, if you use the Web UI
 dot -V               # optional
 podman version       # or docker — if you use clab
 acta --help          # after uv sync + activate
+```
+
+Or re-run the installer anytime; it skips tools that are already present:
+
+```bash
+bash scripts/install-deps.sh
 ```
 
 ## Quickstart
@@ -208,7 +248,8 @@ live **CV-style topology diagram** (zoom, loupe, host rails). Binds
 Settings / `CLAB_HOST`. No SSH-in-UI.
 
 **Prerequisites:** [Install](#install) — at minimum Python 3.15+, uv, and Node.js 20+
-(`npm`). Graphviz is not required for the live diagram.
+(`npm`). Graphviz is not required for the live diagram. Easiest path:
+`bash scripts/install-deps.sh` then the command below.
 
 ### Run it (preferred)
 
@@ -533,8 +574,8 @@ Decommission and Replace). Prefer bulk decommission by hostname prefix.
 
 ## Sharing
 
-1. Clone; follow [Install](#install) (`uv sync --extra dev`, optional
-   `pre-commit install --install-hooks`; add Node if you use the Web UI).
+1. Clone; run `bash scripts/install-deps.sh` (or follow [Install](#install)
+   step-by-step). Optional: `bash scripts/install-deps.sh --hooks`.
 2. Use your own ACT / CVaaS credentials when prompted — never share `.config`.
 3. Optional: `act create` with **your** serial prefix (not cached for others).
 
