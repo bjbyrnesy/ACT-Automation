@@ -20,11 +20,13 @@ const LOUPE_SIZE = 168;
 const LOUPE_RADIUS = LOUPE_SIZE / 2;
 const LOUPE_FACTOR = 2.75;
 
-/** Reserved left strip for Tux so hostname text never draws under the logo. */
-const HOST_ICON_SLOT = 22;
-const HOST_ICON_PAD = 3;
-const HOST_ICON_W = 16;
-const HOST_ICON_H = 19;
+/** Tux hangs off the upper-right corner like a tag; text stays in the box. */
+const HOST_TUX_W = 18;
+const HOST_TUX_H = 21;
+/** How far the tag hangs past the host border. */
+const HOST_TUX_HANG = 8;
+/** Inside-box corner reserved so clipped text cannot enter the tag zone. */
+const HOST_TUX_RESERVE = 12;
 
 const ROLE_FILL: Record<NodeRole, string> = {
   bb: "#0f766e",
@@ -35,7 +37,7 @@ const ROLE_FILL: Record<NodeRole, string> = {
   host: "#c2410c",
 };
 
-/** Official Tux mark (Larry Ewing) sized for narrow host boxes. */
+/** Official Tux mark (Larry Ewing) as an upper-right host tag. */
 function HostTux({ x, y }: { x: number; y: number }) {
   return (
     <image
@@ -43,8 +45,8 @@ function HostTux({ x, y }: { x: number; y: number }) {
       href={tuxUrl}
       x={x}
       y={y}
-      width={HOST_ICON_W}
-      height={HOST_ICON_H}
+      width={HOST_TUX_W}
+      height={HOST_TUX_H}
       preserveAspectRatio="xMidYMid meet"
       aria-hidden="true"
     />
@@ -402,13 +404,14 @@ function SvgCanvas({
 
       {layout.nodes.map((node) => {
         const isHost = node.role === "host";
-        const textLeft = node.x + HOST_ICON_SLOT;
-        const textWidth = Math.max(8, node.w - HOST_ICON_SLOT - 4);
-        const titleX = isHost ? textLeft : node.x + node.w / 2;
+        const titleX = node.x + node.w / 2;
         const titleY = node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4);
         const clipId = isHost
           ? `${idPrefix}host-text-${node.name.replace(/[^A-Za-z0-9_-]/g, "_")}`
           : null;
+        // Text may use the full box except the top-right tag reserve.
+        const textClipW = Math.max(8, node.w - 4 - (isHost ? HOST_TUX_RESERVE : 0));
+        const textClipH = Math.max(8, node.h - 4);
         return (
           <g key={node.name}>
             <rect
@@ -424,48 +427,38 @@ function SvgCanvas({
                   : "cv-diagram__node"
               }
             />
-            {isHost ? (
-              <>
-                <HostTux
-                  x={node.x + HOST_ICON_PAD}
-                  y={node.y + (node.h - HOST_ICON_H) / 2}
-                />
-                <clipPath id={clipId!}>
+            {isHost && clipId ? (
+              <defs>
+                <clipPath id={clipId}>
                   <rect
-                    x={textLeft}
-                    y={node.y}
-                    width={textWidth}
-                    height={node.h}
+                    x={node.x + 2}
+                    y={node.y + 2}
+                    width={textClipW}
+                    height={textClipH}
                   />
                 </clipPath>
-              </>
+              </defs>
             ) : null}
             <g clipPath={clipId ? `url(#${clipId})` : undefined}>
-              <text
-                x={titleX}
-                y={titleY}
-                className={
-                  isHost
-                    ? "cv-diagram__node-title cv-diagram__node-title--host"
-                    : "cv-diagram__node-title"
-                }
-              >
+              <text x={titleX} y={titleY} className="cv-diagram__node-title">
                 {node.title}
               </text>
               {node.subtitle ? (
                 <text
                   x={titleX}
                   y={node.y + node.h / 2 + 12}
-                  className={
-                    isHost
-                      ? "cv-diagram__node-sub cv-diagram__node-sub--host"
-                      : "cv-diagram__node-sub"
-                  }
+                  className="cv-diagram__node-sub"
                 >
                   {node.subtitle}
                 </text>
               ) : null}
             </g>
+            {isHost ? (
+              <HostTux
+                x={node.x + node.w - HOST_TUX_W + HOST_TUX_HANG}
+                y={node.y - HOST_TUX_HANG}
+              />
+            ) : null}
             {node.ports.map((port) => (
               <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
                 <rect
