@@ -14,6 +14,7 @@ from .support import (
     SUPPORT_SCRIPT,
     fail,
     host_run,
+    resolve_clab_runtime,
     resolve_topology_path,
     support_bundle,
     validate_bridge_name,
@@ -124,10 +125,12 @@ def deploy(args):
             fail(f"Could not install viewer annotations: {result.stderr.strip()}")
         if result.stdout:
             print(result.stdout, end="")
+    runtime = resolve_clab_runtime(args.host, getattr(args, "runtime", None))
+    print(f"Using container runtime: {runtime}")
     result = host_run(
         args.host,
         DEPLOY_SCRIPT,
-        [lab["name"], getattr(args, "runtime", None) or "podman"],
+        [lab["name"], runtime],
         content,
     )
     if result.stdout:

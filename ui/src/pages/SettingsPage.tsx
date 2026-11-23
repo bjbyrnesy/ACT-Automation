@@ -179,7 +179,7 @@ export function SettingsPage() {
               value={form.CLAB_RUNTIME}
               onChange={(event) => update("CLAB_RUNTIME", event.target.value)}
             >
-              <option value="">Default (podman for deploy)</option>
+              <option value="">Auto-detect on lab host</option>
               <option value="docker">docker</option>
               <option value="podman">podman</option>
             </select>

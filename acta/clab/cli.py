@@ -166,18 +166,13 @@ def main(argv=None):
         configured_runtime = (config.get("CLAB_RUNTIME") or "").strip().lower()
         if configured_runtime not in {"docker", "podman"}:
             configured_runtime = ""
-        if command in {"deploy", "destroy", "redeploy"}:
-            runtime_default = configured_runtime or "podman"
-        else:
-            runtime_default = configured_runtime or None
         action.add_argument(
             "--runtime",
             choices=("docker", "podman"),
-            default=runtime_default,
+            default=configured_runtime or None,
             help=(
                 "Container runtime (default: CLAB_RUNTIME from .config, else "
-                "podman for deploy/destroy/redeploy; onboarding auto-detects "
-                "when unset)"
+                "auto-detect on the lab host — podman if available, else docker)"
             ),
         )
         action.add_argument(

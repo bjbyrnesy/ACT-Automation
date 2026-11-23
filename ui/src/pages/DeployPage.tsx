@@ -111,14 +111,15 @@ export function DeployPage() {
             value={runtime}
             onChange={(event) => setRuntime(asRuntime(event.target.value))}
           >
-            <option value="">Default (podman, or Settings)</option>
+            <option value="">Auto (Settings, else detect)</option>
             <option value="docker">docker</option>
             <option value="podman">podman</option>
           </select>
         </label>
         <p className="ops-form__hint">
-          Same as CLI <code>--runtime</code>. Docker-only hosts should pick{" "}
-          <code>docker</code> here or set <code>CLAB_RUNTIME</code> in Settings.
+          Same as CLI <code>--runtime</code>. Leave Auto to use{" "}
+          <code>CLAB_RUNTIME</code> from Settings, or probe the lab host
+          (podman if present, otherwise docker).
         </p>
         <label className="ops-form__check">
           <input

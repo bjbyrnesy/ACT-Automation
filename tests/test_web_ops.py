@@ -263,6 +263,17 @@ def test_route_deploy_uses_settings_runtime(
     assert seen["from_act"] is True
 
 
+def test_op_clab_deploy_passes_none_runtime_through(
+    act_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Web ops must not force podman before deploy's auto-detect runs."""
+    seen: dict[str, Any] = {}
+    _patch_clab(monkeypatch, "deploy", lambda args: seen.update(vars(args)))
+    ops.op_clab_deploy(act_file, host="lab1", runtime=None)
+    assert seen["host"] == "lab1"
+    assert seen.get("runtime") in (None, "")
+
+
 def test_route_job_failure_recorded(
     client: TestClient, act_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
