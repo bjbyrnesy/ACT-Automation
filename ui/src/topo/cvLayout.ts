@@ -417,10 +417,18 @@ function columnFabricBottom(
   return bottom;
 }
 
+/** Short peer label for host subtitles (``blz-MSP-mleaf2`` → ``mleaf2``). */
+function shortParentLabel(name: string): string {
+  const m = /-((?:m)?leaf\d+)$/i.exec(name);
+  return m ? m[1].toLowerCase() : name;
+}
+
 /**
- * Hang hosts under their parent column — never beside member leaves.
- * Deep mleaf stacks share one host row below the lowest switch in that column;
- * multiple hosts under the same column sit in a horizontal row.
+ * Hang hosts under / beside their parent column — never level with mleafs.
+ *
+ * Deep stacks or multiple hosts: park in a vertical list to the right of the
+ * column (below the lowest switch) so each uplink can keep its own lane.
+ * Single host under a leaf with nothing below: center under the parent.
  * Returns the lowest Y extent used (for site height).
  */
 function placeHostsUnderParents(
@@ -434,10 +442,12 @@ function placeHostsUnderParents(
 ): number {
   if (!hosts.length) return hostRowY;
 
+  type ColHost = { host: TopologyNode; parent: string; parentY: number };
   type ColGroup = {
+    colX: number;
     cx: number;
     bottom: number;
-    hosts: TopologyNode[];
+    items: ColHost[];
   };
   const byColumn = new Map<number, ColGroup>();
   const loose: TopologyNode[] = [];
@@ -453,9 +463,10 @@ function placeHostsUnderParents(
     let col = byColumn.get(key);
     if (!col) {
       col = {
+        colX: parentPos.x,
         cx: parentPos.x + NODE_W / 2,
         bottom: columnFabricBottom(parentPos, positions, byName),
-        hosts: [],
+        items: [],
       };
       byColumn.set(key, col);
     } else {
@@ -464,22 +475,50 @@ function placeHostsUnderParents(
         columnFabricBottom(parentPos, positions, byName),
       );
     }
-    col.hosts.push(host);
+    col.items.push({ host, parent, parentY: parentPos.y });
   }
 
   const HOST_H_GAP = 28;
+  /** Clear of parent→host uplink lanes between the stack and the host column. */
+  const SIDE_GAP = 72;
   let maxBottom = hostRowY;
 
   for (const col of byColumn.values()) {
-    const y = col.bottom + HOST_DROP;
-    const rowW =
-      col.hosts.length * NODE_W + (col.hosts.length - 1) * HOST_H_GAP;
-    let x = col.cx - rowW / 2;
-    for (const host of col.hosts) {
-      positions.set(host.name, { x, y });
-      x += NODE_W + HOST_H_GAP;
+    col.items.sort((a, b) => {
+      if (a.parentY !== b.parentY) return a.parentY - b.parentY;
+      if (a.parent !== b.parent) return a.parent.localeCompare(b.parent);
+      return a.host.name.localeCompare(b.host.name);
+    });
+
+    const deepOrMany =
+      col.items.length > 1 ||
+      col.items.some((item) => {
+        const p = positions.get(item.parent)!;
+        return col.bottom > p.y + NODE_H + 1;
+      });
+
+    if (deepOrMany) {
+      // Side rail below the stack — one host per row, parent order top→bottom.
+      const x = col.colX + NODE_W + SIDE_GAP;
+      let y = col.bottom + HOST_DROP;
+      for (const item of col.items) {
+        positions.set(item.host.name, { x, y });
+        y += NODE_H + HOST_H_GAP;
+      }
+      maxBottom = Math.max(maxBottom, y - HOST_H_GAP);
+    } else {
+      const y = col.items[0]
+        ? positions.get(col.items[0].parent)!.y + NODE_H + HOST_DROP
+        : hostRowY;
+      const rowW =
+        col.items.length * NODE_W + (col.items.length - 1) * HOST_H_GAP;
+      let x = col.cx - rowW / 2;
+      for (const item of col.items) {
+        positions.set(item.host.name, { x, y });
+        x += NODE_W + HOST_H_GAP;
+      }
+      maxBottom = Math.max(maxBottom, y + NODE_H);
     }
-    maxBottom = Math.max(maxBottom, y + NODE_H);
   }
 
   if (loose.length) {
@@ -648,7 +687,11 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       peerGroupsWidth(leafGroups),
       rowWidth(bb.length),
     ];
-    const width = Math.max(...rowWidths, NODE_W) + SITE_PAD * 2;
+    // Side-rail hosts need a host column to the right of the mleaf stack.
+    const width =
+      Math.max(...rowWidths, NODE_W) +
+      SITE_PAD * 2 +
+      (host.length ? NODE_W + 72 : 0);
     const mleafBlockH =
       mleafDepth > 0
         ? MLEAF_DROP +
@@ -656,6 +699,9 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           Math.max(0, mleafDepth - 1) * MLEAF_STACK_GAP +
           HOST_DROP
         : 0;
+    const hostBlockH = host.length
+      ? host.length * NODE_H + Math.max(0, host.length - 1) * 28
+      : 0;
     const height =
       SITE_PAD * 2 +
       18 +
@@ -663,7 +709,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       (spineGroups.length ? NODE_H + V_GAP : 0) +
       (leafGroups.length ? NODE_H + V_GAP : 0) +
       mleafBlockH +
-      (host.length ? NODE_H : 0);
+      hostBlockH;
     return {
       key,
       borderGroups,
@@ -1141,15 +1187,51 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     }
   }
 
-  // Host uplinks: drop from parent bottom; dogleg around deeper stack peers.
-  for (const link of hostLinks) {
-    const a = byName[link.aNode]!;
-    const b = byName[link.bNode]!;
-    const hostNode = isHostRole(a.role) ? a : b;
-    const parentNode = isHostRole(a.role) ? b : a;
-    const hostPos = positions.get(hostNode.name);
-    const parentPos = positions.get(parentNode.name);
-    if (!hostPos || !parentPos) continue;
+  // Host uplinks: side-rail hosts get a dedicated lane from parent → host;
+  // under-parent hosts stay vertical.
+  const sideRailHosts = hostLinks
+    .map((link) => {
+      const a = byName[link.aNode]!;
+      const b = byName[link.bNode]!;
+      const hostNode = isHostRole(a.role) ? a : b;
+      const parentNode = isHostRole(a.role) ? b : a;
+      const hostPos = positions.get(hostNode.name);
+      const parentPos = positions.get(parentNode.name);
+      if (!hostPos || !parentPos) return null;
+      const sideRail = hostPos.x >= parentPos.x + NODE_W - 2;
+      return { link, hostNode, parentNode, hostPos, parentPos, sideRail };
+    })
+    .filter((v): v is NonNullable<typeof v> => v != null);
+
+  // Lane index per parent (stable by parent Y) so siblings share a corridor
+  // but different parents stay visually distinct.
+  const parentLane = new Map<string, number>();
+  {
+    const parents = [
+      ...new Set(
+        sideRailHosts.filter((h) => h.sideRail).map((h) => h.parentNode.name),
+      ),
+    ].sort((a, b) => {
+      const ay = positions.get(a)?.y ?? 0;
+      const by = positions.get(b)?.y ?? 0;
+      return ay !== by ? ay - by : a.localeCompare(b);
+    });
+    parents.forEach((name, i) => parentLane.set(name, i));
+  }
+
+  // Right-side host ports on a parent: stack by host Y.
+  const rightHostSlot = new Map<string, number>();
+  const rightHostCount = new Map<string, number>();
+  for (const item of sideRailHosts) {
+    if (!item.sideRail) continue;
+    rightHostCount.set(
+      item.parentNode.name,
+      (rightHostCount.get(item.parentNode.name) ?? 0) + 1,
+    );
+  }
+
+  for (const item of sideRailHosts) {
+    const { link, hostNode, parentNode, hostPos, parentPos, sideRail } = item;
     const id = `${link.aNode}:${link.aPort}-${link.bNode}:${link.bPort}`;
     if (placedIds.has(id)) continue;
 
@@ -1158,69 +1240,44 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     const parentPort =
       link.aNode === parentNode.name ? link.aPort : link.bPort;
 
-    const hostCx = hostPos.x + NODE_W / 2;
-    const stackBelow = [...positions.entries()].some(([name, pos]) => {
-      if (name === parentNode.name || name === hostNode.name) return false;
-      const node = byName[name];
-      if (!node || isHostRole(node.role)) return false;
-      return (
-        Math.abs(pos.x - parentPos.x) < 2 &&
-        pos.y > parentPos.y + NODE_H - 1 &&
-        pos.y < hostPos.y
-      );
-    });
+    if (sideRail) {
+      const lane = parentLane.get(parentNode.name) ?? 0;
+      // Stay in the gap between stack right edge and host left ports.
+      const laneX = parentPos.x + NODE_W + 14 + lane * 14;
+      const slot = rightHostSlot.get(parentNode.name) ?? 0;
+      rightHostSlot.set(parentNode.name, slot + 1);
+      const slots = rightHostCount.get(parentNode.name) ?? 1;
+      const t = (slot + 1) / (slots + 1);
+      const parentAnchor = {
+        x: parentPos.x + NODE_W,
+        y: parentPos.y + NODE_H * t - PORT_H / 2,
+      };
+      const hostAnchor = {
+        x: hostPos.x - PORT_W,
+        y: hostPos.y + NODE_H / 2 - PORT_H / 2,
+      };
 
-    // Outer-ish bottom port so a dogleg clears the stack; else center on host.
-    const parentAnchor = {
-      x: stackBelow
-        ? parentPos.x + NODE_W - PORT_W - 4
-        : Math.min(
-            parentPos.x + NODE_W - PORT_W - 2,
-            Math.max(parentPos.x + 2, hostCx - PORT_W / 2),
-          ),
-      y: parentPos.y + NODE_H,
-    };
-    const hostAnchor = {
-      x: hostCx - PORT_W / 2,
-      y: hostPos.y - PORT_H,
-    };
+      ensurePorts(parentNode.name).push({
+        port: parentPort,
+        side: "right",
+        x: parentAnchor.x,
+        y: parentAnchor.y,
+        peerName: hostNode.name,
+      });
+      ensurePorts(hostNode.name).push({
+        port: hostPort,
+        side: "left",
+        x: hostAnchor.x,
+        y: hostAnchor.y,
+        peerName: parentNode.name,
+      });
 
-    ensurePorts(parentNode.name).push({
-      port: parentPort,
-      side: "bottom",
-      x: parentAnchor.x,
-      y: parentAnchor.y,
-      peerName: hostNode.name,
-    });
-    ensurePorts(hostNode.name).push({
-      port: hostPort,
-      side: "top",
-      x: hostAnchor.x,
-      y: hostAnchor.y,
-      peerName: parentNode.name,
-    });
-
-    const parentFace = outerAttach(parentAnchor, "bottom");
-    const parentStub = stubFrom(parentFace, "bottom");
-    const hostFace = outerAttach(hostAnchor, "top");
-    const hostStub = stubFrom(hostFace, "top");
-
-    if (!stackBelow && Math.abs(parentStub.x - hostStub.x) < 2) {
-      linkEndpoints.set(id, [parentFace, parentStub, hostStub, hostFace]);
-    } else if (!stackBelow) {
-      const elbow = { x: parentStub.x, y: hostStub.y };
-      linkEndpoints.set(id, [
-        parentFace,
-        parentStub,
-        elbow,
-        hostStub,
-        hostFace,
-      ]);
-    } else {
-      // Exit parent, run beside the deeper stack, then into the host row.
-      const bypassX = parentPos.x + NODE_W + 18;
-      const midTop = { x: bypassX, y: parentStub.y };
-      const midBot = { x: bypassX, y: hostStub.y };
+      const parentFace = outerAttach(parentAnchor, "right");
+      const parentStub = stubFrom(parentFace, "right");
+      const hostFace = outerAttach(hostAnchor, "left");
+      const hostStub = stubFrom(hostFace, "left");
+      const midTop = { x: laneX, y: parentStub.y };
+      const midBot = { x: laneX, y: hostStub.y };
       linkEndpoints.set(id, [
         parentFace,
         parentStub,
@@ -1229,6 +1286,51 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         hostStub,
         hostFace,
       ]);
+    } else {
+      const hostCx = hostPos.x + NODE_W / 2;
+      const parentAnchor = {
+        x: Math.min(
+          parentPos.x + NODE_W - PORT_W - 2,
+          Math.max(parentPos.x + 2, hostCx - PORT_W / 2),
+        ),
+        y: parentPos.y + NODE_H,
+      };
+      const hostAnchor = {
+        x: hostCx - PORT_W / 2,
+        y: hostPos.y - PORT_H,
+      };
+
+      ensurePorts(parentNode.name).push({
+        port: parentPort,
+        side: "bottom",
+        x: parentAnchor.x,
+        y: parentAnchor.y,
+        peerName: hostNode.name,
+      });
+      ensurePorts(hostNode.name).push({
+        port: hostPort,
+        side: "top",
+        x: hostAnchor.x,
+        y: hostAnchor.y,
+        peerName: parentNode.name,
+      });
+
+      const parentFace = outerAttach(parentAnchor, "bottom");
+      const parentStub = stubFrom(parentFace, "bottom");
+      const hostFace = outerAttach(hostAnchor, "top");
+      const hostStub = stubFrom(hostFace, "top");
+      if (Math.abs(parentStub.x - hostStub.x) < 2) {
+        linkEndpoints.set(id, [parentFace, parentStub, hostStub, hostFace]);
+      } else {
+        const elbow = { x: parentStub.x, y: hostStub.y };
+        linkEndpoints.set(id, [
+          parentFace,
+          parentStub,
+          elbow,
+          hostStub,
+          hostFace,
+        ]);
+      }
     }
     placedIds.add(id);
   }
@@ -1288,7 +1390,15 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       w: NODE_W,
       h: NODE_H,
       title: node.name,
-      subtitle: node.role === "host" ? (shortIp ?? "host") : shortIp,
+      subtitle:
+        node.role === "host"
+          ? (() => {
+              const parent = hostParentName(node.name, graph.links, byName);
+              const via = parent ? shortParentLabel(parent) : null;
+              if (shortIp && via) return `${shortIp} · ${via}`;
+              return via ?? shortIp ?? "host";
+            })()
+          : shortIp,
       ports: portsByNode.get(node.name) ?? [],
     });
   }
