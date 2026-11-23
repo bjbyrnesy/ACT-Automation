@@ -27,8 +27,10 @@ def destroy(args, *, allow_missing: bool = False):
         raise
     args.topology = str(path)
     lab = validate_lab(path)
-    runtime = resolve_clab_runtime(args.host, getattr(args, "runtime", None))
-    print(f"Using container runtime: {runtime}")
+    requested = getattr(args, "runtime", None)
+    runtime = resolve_clab_runtime(args.host, requested)
+    how = "explicit" if requested in ("docker", "podman") else "auto-detect"
+    print(f"Using container runtime: {runtime} ({how})")
     result = host_run(
         args.host,
         DESTROY_SCRIPT,

@@ -640,24 +640,50 @@ esac
 
 CLI_ERROR = re.compile(r"(?im)^\s*%\s*(?:error|invalid|incomplete|ambiguous)")
 
-# Probe whether a container engine answers on the lab host (local or SSH).
+# Probe whether a container engine can list containers on the lab host.
+# Use ``ps`` (not ``info``): a present-but-broken podman binary often still
+# confuses operators, and ``ps`` matches what containerlab needs.
 RUNTIME_PROBE_SCRIPT = r"""set -eu
 case "$1" in
-  docker) exec docker info >/dev/null ;;
-  podman) exec podman info >/dev/null ;;
-  sudo-docker) exec sudo -n docker info >/dev/null ;;
-  sudo-podman) exec sudo -n podman info >/dev/null ;;
+  docker) exec docker ps >/dev/null ;;
+  podman) exec podman ps >/dev/null ;;
+  sudo-docker) exec sudo -n docker ps >/dev/null ;;
+  sudo-podman) exec sudo -n podman ps >/dev/null ;;
   *) exit 2 ;;
 esac
+"""
+
+# When live probes fail (SSH quirks, permissions), fall back to which binary
+# exists so Docker-only hosts are not forced onto the podman default.
+RUNTIME_WHICH_SCRIPT = r"""set -eu
+has_docker=0
+has_podman=0
+command -v docker >/dev/null 2>&1 && has_docker=1
+command -v podman >/dev/null 2>&1 && has_podman=1
+if [ "$has_podman" -eq 1 ] && [ "$has_docker" -eq 0 ]; then
+  echo podman
+  exit 0
+fi
+if [ "$has_docker" -eq 1 ] && [ "$has_podman" -eq 0 ]; then
+  echo docker
+  exit 0
+fi
+if [ "$has_docker" -eq 1 ] && [ "$has_podman" -eq 1 ]; then
+  # Both installed but neither answered ``ps`` — prefer docker; a broken
+  # podman stub is the common autodetect failure mode.
+  echo docker
+  exit 0
+fi
+exit 1
 """
 
 
 def resolve_clab_runtime(host, preferred=None):
     """Return ``docker`` or ``podman`` for ``containerlab --runtime``.
 
-    Explicit ``preferred`` wins. When unset, probe the lab host and prefer
-    podman when available (historical default), otherwise docker — so
-    Docker-only hosts work without ``CLAB_RUNTIME`` / ``--runtime``.
+    Explicit ``preferred`` wins. When unset, probe the lab host (podman first
+    if it can ``ps``, else docker). If every live probe fails, pick by which
+    binary exists — Docker-only hosts must not fall through to ``podman``.
     """
     if preferred in ("docker", "podman"):
         return preferred
@@ -665,6 +691,10 @@ def resolve_clab_runtime(host, preferred=None):
         result = host_run(host, RUNTIME_PROBE_SCRIPT, [candidate], "")
         if result.returncode == 0:
             return candidate.removeprefix("sudo-")
+    which = host_run(host, RUNTIME_WHICH_SCRIPT, [], "")
+    picked = (which.stdout or "").strip().splitlines()
+    if which.returncode == 0 and picked and picked[0] in {"docker", "podman"}:
+        return picked[0]
     return "podman"
 
 
