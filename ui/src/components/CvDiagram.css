@@ -75,10 +75,20 @@
   position: relative;
 }
 
+.cv-diagram__loupe-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+}
+
+.cv-diagram__loupe-icon {
+  display: block;
+}
+
 .cv-diagram__loupe {
   position: absolute;
-  width: 168px;
-  height: 168px;
+  /* width/height set inline from LOUPE_SIZE */
   border-radius: 50%;
   overflow: hidden;
   pointer-events: none;

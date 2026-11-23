@@ -16,7 +16,7 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 4;
 
 /** Circular magnifier: inspect labels without changing diagram zoom. */
-const LOUPE_SIZE = 168;
+const LOUPE_SIZE = 240;
 const LOUPE_RADIUS = LOUPE_SIZE / 2;
 const LOUPE_FACTOR = 2.75;
 
@@ -251,11 +251,34 @@ export function CvDiagram({
           type="button"
           disabled={!layout}
           aria-pressed={loupeOn}
-          className={loupeOn ? "is-active" : undefined}
+          aria-label="Magnifier"
+          className={`cv-diagram__loupe-btn${loupeOn ? " is-active" : ""}`}
           onClick={toggleLoupe}
           title="Magnifier — inspect hostnames without zooming the whole diagram"
         >
-          Loupe
+          <svg
+            className="cv-diagram__loupe-icon"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            aria-hidden="true"
+          >
+            <circle
+              cx="6.5"
+              cy="6.5"
+              r="4.25"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+            />
+            <path
+              d="M9.6 9.6 13.5 13.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
         <span className="cv-diagram__hint">{hint}</span>
       </div>
@@ -291,6 +314,8 @@ export function CvDiagram({
           <div
             className="cv-diagram__loupe"
             style={{
+              width: LOUPE_SIZE,
+              height: LOUPE_SIZE,
               left: loupePos.vx - LOUPE_RADIUS,
               top: loupePos.vy - LOUPE_RADIUS,
             }}
