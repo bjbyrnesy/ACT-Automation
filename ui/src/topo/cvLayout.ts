@@ -79,6 +79,11 @@ export type CvLayout = {
 
 const NODE_W = 118;
 const NODE_H = 52;
+/**
+ * Member leaves sit in the peer corridor; keep them narrower than fabric
+ * switches so leaf bottom ports stay usable for dual-home access.
+ */
+const MLEAF_W = 96;
 /** Narrower than fabric switches; wide enough for ``mleaf1:et10`` + Tux slot. */
 const HOST_W = 88;
 const PORT_W = 22;
@@ -107,6 +112,12 @@ type PairKey = string;
 
 function pairKey(a: string, b: string): PairKey {
   return a < b ? `${a}::${b}` : `${b}::${a}`;
+}
+
+function deviceW(role: NodeRole): number {
+  if (role === "host") return HOST_W;
+  if (role === "mleaf") return MLEAF_W;
+  return NODE_W;
 }
 
 function diagramTitle(graph: TopologyGraph): string {
@@ -358,7 +369,7 @@ function placeMleafStacks(
     maxDepth = Math.max(maxDepth, sorted.length);
     for (let i = 0; i < sorted.length; i += 1) {
       positions.set(sorted[i].name, {
-        x: stack.cx - NODE_W / 2,
+        x: stack.cx - MLEAF_W / 2,
         y: startY + i * (NODE_H + MLEAF_STACK_GAP),
       });
     }
@@ -509,12 +520,32 @@ function pairColumnBottom(
   for (const [name, pos] of positions) {
     const node = byName[name];
     if (!node || isHostRole(node.role)) continue;
-    const mid = pos.x + NODE_W / 2;
+    const mid = pos.x + deviceW(node.role) / 2;
     if (mid >= L - 1 && mid <= R + 1) {
       bottom = Math.max(bottom, pos.y + NODE_H);
     }
   }
   return bottom;
+}
+
+/** True when a member leaf sits under this leaf pair's span. */
+function pairHasMleaf(
+  leftLeaf: string,
+  rightLeaf: string,
+  positions: Map<string, Pos>,
+  byName: Record<string, TopologyNode>,
+): boolean {
+  const lp = positions.get(leftLeaf);
+  const rp = positions.get(rightLeaf);
+  if (!lp || !rp) return false;
+  const L = Math.min(lp.x, rp.x);
+  const R = Math.max(lp.x, rp.x) + NODE_W;
+  for (const [name, pos] of positions) {
+    if (byName[name]?.role !== "mleaf") continue;
+    const mid = pos.x + MLEAF_W / 2;
+    if (mid >= L - 1 && mid <= R + 1) return true;
+  }
+  return false;
 }
 
 /** Short peer label for host subtitles (``blz-MSP-mleaf2`` → ``mleaf2``). */
@@ -1409,10 +1440,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           );
 
           if (i === 0) {
-            // First mleaf: straight vertical into top port, centered on both
-            // interface blocks — no horizontal elbow/stub.
+            // First mleaf: drop from leaf, clamp onto the narrower mleaf top.
             const mleafAnchor = {
-              x: leafAnchor.x,
+              x: Math.min(
+                mPos.x + MLEAF_W - PORT_W - 2,
+                Math.max(mPos.x + 2, leafAnchor.x),
+              ),
               y: mPos.y - PORT_H,
             };
             ensurePorts(leafName).push({
@@ -1432,8 +1465,15 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
               kind: "uplink",
             });
             const leafFace = outerAttach(leafAnchor, "bottom");
+            const leafStub = stubFrom(leafFace, "bottom");
             const mleafFace = outerAttach(mleafAnchor, "top");
-            linkEndpoints.set(id, [leafFace, mleafFace]);
+            const path: LaidPoint[] = [leafFace, leafStub];
+            if (Math.abs(leafStub.x - mleafFace.x) >= 2) {
+              path.push({ x: leafStub.x, y: mleafFace.y - 4 });
+              path.push({ x: mleafFace.x, y: mleafFace.y - 4 });
+            }
+            path.push(mleafFace);
+            linkEndpoints.set(id, path);
             placedIds.add(id);
             return;
           }
@@ -1450,7 +1490,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           const mleafAnchor =
             side === "left"
               ? { x: mPos.x - PORT_W, y: uplinkY }
-              : { x: mPos.x + NODE_W, y: uplinkY };
+              : { x: mPos.x + MLEAF_W, y: uplinkY };
 
           ensurePorts(leafName).push({
             port: leafPort,
@@ -1519,8 +1559,9 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     );
     let rail: "left" | "right" | null = null;
     if (!dual) {
+      const parentWidth = deviceW(parentNode.role);
       if (hostPos.x + HOST_W <= parentPos.x + 2) rail = "left";
-      else if (hostPos.x >= parentPos.x + NODE_W - 2) rail = "right";
+      else if (hostPos.x >= parentPos.x + parentWidth - 2) rail = "right";
     }
     hostRoutes.push({
       link,
@@ -1541,8 +1582,24 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     sideHostCount.set(key, (sideHostCount.get(key) ?? 0) + 1);
   }
 
+  // Dual-home hosts per MLAG pair, top → bottom (first uses inward leaf ports).
+  const dualHostsByPair = new Map<string, string[]>();
+  for (const item of hostRoutes) {
+    if (!item.dual) continue;
+    const key = pairKey(item.dual[0], item.dual[1]);
+    const list = dualHostsByPair.get(key) ?? [];
+    if (!list.includes(item.hostNode.name)) list.push(item.hostNode.name);
+    dualHostsByPair.set(key, list);
+  }
+  for (const list of dualHostsByPair.values()) {
+    list.sort(
+      (a, b) =>
+        (positions.get(a)?.y ?? 0) - (positions.get(b)?.y ?? 0) ||
+        a.localeCompare(b),
+    );
+  }
+
   // Dual-home: two top ports on the host; leaf bottoms aim inward; Po mark later.
-  const dualHostSlot = new Map<string, number>();
   const dualHomePo: Array<{ host: string; paths: LaidPoint[][] }> = [];
 
   for (const item of hostRoutes) {
@@ -1558,22 +1615,31 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     if (dual) {
       const [leftLeaf, rightLeaf] = dual;
       const isLeft = parentNode.name === leftLeaf;
-      const slot = dualHostSlot.get(hostNode.name) ?? 0;
-      dualHostSlot.set(hostNode.name, slot + 1);
+      const pair = pairKey(leftLeaf, rightLeaf);
+      const ordered = dualHostsByPair.get(pair) ?? [hostNode.name];
+      const dualIndex = Math.max(0, ordered.indexOf(hostNode.name));
+      const reserveMleaf = pairHasMleaf(
+        leftLeaf,
+        rightLeaf,
+        positions,
+        byName,
+      )
+        ? 1
+        : 0;
       // Left leg → leftish top port; right leg → rightish (no cross).
       const hostAnchor = {
         x: hostPos.x + (isLeft ? HOST_W * 0.2 : HOST_W * 0.8) - PORT_W / 2,
         y: hostPos.y - PORT_H,
       };
       const leafPos = parentPos;
-      // Attach on the *outer* bottom of each leaf so verticals clear the
-      // centered mleaf column instead of dropping through it.
-      const parentAnchor = {
-        x: isLeft
-          ? leafPos.x + 4
-          : leafPos.x + NODE_W - PORT_W - 4,
-        y: leafPos.y + NODE_H,
-      };
+      // Inward from the peer face; slot 0 is reserved for mleaf uplinks when
+      // present, so the first dual-home is not parked on the far outer edge.
+      const parentAnchor = bottomPortFromInner(
+        leafPos,
+        dualIndex + reserveMleaf,
+        ordered.length + reserveMleaf,
+        isLeft,
+      );
 
       ensurePorts(parentNode.name).push({
         port: parentPort,
@@ -1609,7 +1675,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         ),
       );
       // Keep the drop outside the centered mleaf footprint.
-      const mleafHalf = NODE_W / 2 + 10;
+      const mleafHalf = MLEAF_W / 2 + 8;
       const bypassX = isLeft
         ? Math.min(parentStub.x, pairCx - mleafHalf)
         : Math.max(parentStub.x, pairCx + mleafHalf);
@@ -1651,7 +1717,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const parentAnchor =
         rail === "left"
           ? { x: parentPos.x - PORT_W, y: parentY }
-          : { x: parentPos.x + NODE_W, y: parentY };
+          : { x: parentPos.x + deviceW(parentNode.role), y: parentY };
       const hostAnchor =
         rail === "left"
           ? {
@@ -1797,7 +1863,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       site: node.site,
       x: pos.x,
       y: pos.y,
-      w: node.role === "host" ? HOST_W : NODE_W,
+      w: deviceW(node.role),
       h: NODE_H,
       title: node.name,
       subtitle:
