@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { submitActJob, submitClabJob, type Job } from "../api/client";
 import { JobsDrawer } from "../components/JobsDrawer";
 import { useActiveTopology } from "../state/activeTopology";
 import "./OpsPage.css";
 
 type ClabAction = "generate" | "deploy" | "destroy" | "redeploy" | "onboard";
+type RuntimeChoice = "" | "docker" | "podman";
 
 const CLAB_ACTIONS: { value: ClabAction; label: string }[] = [
   { value: "generate", label: "Generate" },
@@ -14,15 +15,39 @@ const CLAB_ACTIONS: { value: ClabAction; label: string }[] = [
   { value: "onboard", label: "Onboard" },
 ];
 
+function asRuntime(raw: unknown): RuntimeChoice {
+  return raw === "docker" || raw === "podman" ? raw : "";
+}
+
 export function DeployPage() {
   const { active } = useActiveTopology();
   const [host, setHost] = useState("");
+  const [runtime, setRuntime] = useState<RuntimeChoice>("");
   const [fromAct, setFromAct] = useState(true);
   const [tenant, setTenant] = useState("");
   const [deployAfterUpload, setDeployAfterUpload] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [job, setJob] = useState<Job | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/settings")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as Record<string, unknown>;
+        if (cancelled) return;
+        setRuntime(asRuntime(body.CLAB_RUNTIME));
+        const configuredHost = String(body.CLAB_HOST ?? "").trim();
+        if (configuredHost) setHost(configuredHost);
+      })
+      .catch(() => {
+        /* Deploy still works; settings prefill is best-effort. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function runClab(action: ClabAction) {
     if (!active.path || busy) return;
@@ -33,6 +58,7 @@ export function DeployPage() {
         await submitClabJob(action, {
           path: active.path,
           ...(host.trim() ? { host: host.trim() } : {}),
+          ...(runtime ? { runtime } : {}),
           ...(action === "generate" ? {} : { from_act: fromAct }),
         }),
       );
@@ -76,9 +102,25 @@ export function DeployPage() {
           <input
             value={host}
             onChange={(event) => setHost(event.target.value)}
-            placeholder="Use configured host"
+            placeholder="Use configured host / local"
           />
         </label>
+        <label>
+          Container runtime
+          <select
+            value={runtime}
+            onChange={(event) => setRuntime(asRuntime(event.target.value))}
+          >
+            <option value="">Auto (Settings, else detect)</option>
+            <option value="docker">docker</option>
+            <option value="podman">podman</option>
+          </select>
+        </label>
+        <p className="ops-form__hint">
+          Same as CLI <code>--runtime</code>. Leave Auto to use{" "}
+          <code>CLAB_RUNTIME</code> from Settings, or probe the lab host
+          (podman if present, otherwise docker).
+        </p>
         <label className="ops-form__check">
           <input
             type="checkbox"

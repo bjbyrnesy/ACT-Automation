@@ -5,6 +5,7 @@ type Settings = {
   CLAB_HOST: string;
   CLAB_IMAGE: string;
   CLAB_NAME: string;
+  CLAB_RUNTIME: string;
   ACT_TENANT: string;
   ACT_USER: string;
   ACT_API_KEY: string | null;
@@ -22,6 +23,7 @@ const EMPTY: Settings = {
   CLAB_HOST: "",
   CLAB_IMAGE: "",
   CLAB_NAME: "",
+  CLAB_RUNTIME: "",
   ACT_TENANT: "",
   ACT_USER: "",
   ACT_API_KEY: null,
@@ -41,6 +43,10 @@ function asSettings(raw: Record<string, unknown>): Settings {
     CLAB_HOST: String(raw.CLAB_HOST ?? ""),
     CLAB_IMAGE: String(raw.CLAB_IMAGE ?? ""),
     CLAB_NAME: String(raw.CLAB_NAME ?? ""),
+    CLAB_RUNTIME:
+      raw.CLAB_RUNTIME === "docker" || raw.CLAB_RUNTIME === "podman"
+        ? String(raw.CLAB_RUNTIME)
+        : "",
     ACT_TENANT: String(raw.ACT_TENANT ?? ""),
     ACT_USER: String(raw.ACT_USER ?? ""),
     ACT_API_KEY:
@@ -103,6 +109,7 @@ export function SettingsPage() {
           CLAB_HOST: form.CLAB_HOST,
           CLAB_IMAGE: form.CLAB_IMAGE,
           CLAB_NAME: form.CLAB_NAME,
+          CLAB_RUNTIME: form.CLAB_RUNTIME,
           ACT_TENANT: form.ACT_TENANT,
           ACT_USER: form.ACT_USER,
           ACT_API_KEY: form.ACT_API_KEY,
@@ -165,6 +172,17 @@ export function SettingsPage() {
               value={form.CLAB_NAME}
               onChange={(event) => update("CLAB_NAME", event.target.value)}
             />
+          </label>
+          <label>
+            CLAB_RUNTIME
+            <select
+              value={form.CLAB_RUNTIME}
+              onChange={(event) => update("CLAB_RUNTIME", event.target.value)}
+            >
+              <option value="">Auto-detect on lab host</option>
+              <option value="docker">docker</option>
+              <option value="podman">podman</option>
+            </select>
           </label>
         </fieldset>
         <fieldset>

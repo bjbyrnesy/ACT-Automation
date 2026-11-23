@@ -640,6 +640,33 @@ esac
 
 CLI_ERROR = re.compile(r"(?im)^\s*%\s*(?:error|invalid|incomplete|ambiguous)")
 
+# Probe whether a container engine answers on the lab host (local or SSH).
+RUNTIME_PROBE_SCRIPT = r"""set -eu
+case "$1" in
+  docker) exec docker info >/dev/null ;;
+  podman) exec podman info >/dev/null ;;
+  sudo-docker) exec sudo -n docker info >/dev/null ;;
+  sudo-podman) exec sudo -n podman info >/dev/null ;;
+  *) exit 2 ;;
+esac
+"""
+
+
+def resolve_clab_runtime(host, preferred=None):
+    """Return ``docker`` or ``podman`` for ``containerlab --runtime``.
+
+    Explicit ``preferred`` wins. When unset, probe the lab host and prefer
+    podman when available (historical default), otherwise docker — so
+    Docker-only hosts work without ``CLAB_RUNTIME`` / ``--runtime``.
+    """
+    if preferred in ("docker", "podman"):
+        return preferred
+    for candidate in ("podman", "docker", "sudo-podman", "sudo-docker"):
+        result = host_run(host, RUNTIME_PROBE_SCRIPT, [candidate], "")
+        if result.returncode == 0:
+            return candidate.removeprefix("sudo-")
+    return "podman"
+
 
 def host_run(host, script, args, data):
     command = ["bash", "-c", script, "clab-workflow", *args]

@@ -9,6 +9,7 @@ from .support import (
     DESTROY_SCRIPT,
     fail,
     host_run,
+    resolve_clab_runtime,
     resolve_topology_path,
     validate_lab,
 )
@@ -26,7 +27,8 @@ def destroy(args, *, allow_missing: bool = False):
         raise
     args.topology = str(path)
     lab = validate_lab(path)
-    runtime = getattr(args, "runtime", None) or "podman"
+    runtime = resolve_clab_runtime(args.host, getattr(args, "runtime", None))
+    print(f"Using container runtime: {runtime}")
     result = host_run(
         args.host,
         DESTROY_SCRIPT,

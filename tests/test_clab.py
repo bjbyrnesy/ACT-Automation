@@ -1163,9 +1163,69 @@ links:
                 return_value=subprocess.CompletedProcess([], 0, "", ""),
             ) as run:
                 clab.deploy(args)
+            # Explicit runtime skips the probe; only the deploy script runs.
+            self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[2], ["demo", "podman"])
             self.assertIn('--runtime "$runtime"', clab.DEPLOY_SCRIPT)
             self.assertIn("podman machine ssh", clab.DEPLOY_SCRIPT)
+
+    def test_deploy_auto_detects_docker_when_podman_unavailable(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "lab.yml"
+            path.write_text(
+                clab.MARKER
+                + json.dumps(
+                    {
+                        "name": "demo",
+                        "topology": {"nodes": {"a": {"kind": "arista_ceos"}}},
+                    }
+                )
+            )
+            args = clab.argparse.Namespace(
+                topology=str(path), host="labhost", mgmt_network=None, runtime=None
+            )
+
+            def fake_run(host, script, argv, data):
+                if script is clab.RUNTIME_PROBE_SCRIPT:
+                    engine = argv[0]
+                    ok = engine in {"docker", "sudo-docker"}
+                    return subprocess.CompletedProcess(
+                        [], 0 if ok else 1, "", "" if ok else "podman missing"
+                    )
+                return subprocess.CompletedProcess([], 0, "deployed\n", "")
+
+            with (
+                mock.patch("acta.clab.support.host_run", side_effect=fake_run),
+                mock.patch.object(clab_deploy, "host_run", side_effect=fake_run) as run,
+            ):
+                clab.deploy(args)
+            deploy_calls = [
+                call
+                for call in run.call_args_list
+                if call.args[1] is clab.DEPLOY_SCRIPT
+            ]
+            self.assertEqual(len(deploy_calls), 1)
+            self.assertEqual(deploy_calls[0].args[2], ["demo", "docker"])
+
+    def test_resolve_clab_runtime_prefers_explicit_then_podman(self):
+        self.assertEqual(clab.resolve_clab_runtime(None, "docker"), "docker")
+        with mock.patch(
+            "acta.clab.support.host_run",
+            return_value=subprocess.CompletedProcess([], 0, "", ""),
+        ) as run:
+            self.assertEqual(clab.resolve_clab_runtime("lab", None), "podman")
+            self.assertEqual(run.call_args.args[2], ["podman"])
+
+    def test_resolve_clab_runtime_falls_back_to_docker(self):
+        def fake_run(host, script, argv, data):
+            engine = argv[0]
+            ok = engine in {"docker", "sudo-docker"}
+            return subprocess.CompletedProcess(
+                [], 0 if ok else 1, "", "" if ok else "no podman"
+            )
+
+        with mock.patch("acta.clab.support.host_run", side_effect=fake_run):
+            self.assertEqual(clab.resolve_clab_runtime("lab", None), "docker")
 
     def test_finds_lab_in_docker_when_podman_is_empty(self):
         lab = {

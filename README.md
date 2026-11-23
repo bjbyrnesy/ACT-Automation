@@ -446,7 +446,9 @@ python acta.py clab redeploy mylab.clab.yml
 
 ### Runtime and host
 
-- Deploy / destroy / redeploy default to `--runtime podman` (`docker` optional).
+- Deploy / destroy / redeploy use `--runtime` / `CLAB_RUNTIME` when set;
+  otherwise auto-detect on the lab host (podman if available, else docker).
+  Web UI Deploy + Settings expose the same choice.
 - `--host user@lab-host` runs those steps over SSH (passwordless sudo for
   containerlab / runtime as documented for your host).
 - Onboard auto-discovers docker / rootless / rootful podman unless `--runtime` is set.
@@ -466,9 +468,10 @@ Bridge settings apply when the network is **created**; if a network already
 exists, destroy it first (or use a new `--mgmt-network` name) for Docker to
 pick up a new bridge.
 
-`.config` keys (CLI wins): `CLAB_NAME`, `CLAB_IMAGE`, `CLAB_HOST`, `CLAB_HOST_IMAGE`,
-`CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`, `CLAB_DISABLEAAA`,
-`CVAAS_HOST`, `CVAAS_TOKEN`, …
+`.config` keys (CLI wins): `CLAB_NAME`, `CLAB_IMAGE`, `CLAB_HOST`, `CLAB_RUNTIME`
+(`docker`|`podman`; when unset, deploy/destroy/redeploy auto-detect),
+`CLAB_HOST_IMAGE`, `CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`,
+`CLAB_DISABLEAAA`, `CVAAS_HOST`, `CVAAS_TOKEN`, …
 
 Full flag lists: `python acta.py clab <command> --help`.
 

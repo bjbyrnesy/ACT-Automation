@@ -163,16 +163,16 @@ def main(argv=None):
             default=config.get("CLAB_HOST") or None,
             help="SSH alias or user@host (default: CLAB_HOST from .config; omit to run locally)",
         )
-        runtime_default = (
-            "podman" if command in {"deploy", "destroy", "redeploy"} else None
-        )
+        configured_runtime = (config.get("CLAB_RUNTIME") or "").strip().lower()
+        if configured_runtime not in {"docker", "podman"}:
+            configured_runtime = ""
         action.add_argument(
             "--runtime",
             choices=("docker", "podman"),
-            default=runtime_default,
+            default=configured_runtime or None,
             help=(
-                "Container runtime (deploy/destroy/redeploy default to podman; "
-                "onboarding auto-detects)"
+                "Container runtime (default: CLAB_RUNTIME from .config, else "
+                "auto-detect on the lab host — podman if available, else docker)"
             ),
         )
         action.add_argument(
