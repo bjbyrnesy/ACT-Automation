@@ -440,11 +440,38 @@ function shortParentLabel(name: string): string {
   return m ? m[1].toLowerCase() : name;
 }
 
+/** Bounding box of the leaf pair (or single leaf) that feeds an mleaf column. */
+function leafPairBoundsForColumn(
+  mleafParent: string,
+  links: GraphLink[],
+  byName: Record<string, TopologyNode>,
+  positions: Map<string, Pos>,
+): { left: number; right: number } | null {
+  const leaves = mleafParentNames(mleafParent, links, byName);
+  const xs = leaves
+    .map((name) => positions.get(name))
+    .filter((p): p is Pos => p != null);
+  // Fall back to the attach parent itself when it is already a leaf.
+  if (!xs.length) {
+    const self = positions.get(mleafParent);
+    const node = byName[mleafParent];
+    if (self && node?.role === "leaf") {
+      return { left: self.x, right: self.x + NODE_W };
+    }
+    return null;
+  }
+  return {
+    left: Math.min(...xs.map((p) => p.x)),
+    right: Math.max(...xs.map((p) => p.x + NODE_W)),
+  };
+}
+
 /**
  * Hang hosts under / beside their parent column — never level with mleafs.
  *
  * Deep stacks or multiple hosts: park in vertical lists on both sides of the
  * column (below the lowest switch). Odd switch ports → left rail, even → right.
+ * Side rails stay inside the parent leaf-pair width.
  * Single host under a leaf with nothing below: center under the parent.
  * Returns the lowest Y extent used (for site height).
  */
@@ -502,8 +529,6 @@ function placeHostsUnderParents(
   }
 
   const HOST_H_GAP = 20;
-  /** Clear of parent→host uplink lanes between the stack and each host column. */
-  const SIDE_GAP = 56;
   let maxBottom = hostRowY;
 
   const sortColHosts = (items: ColHost[]) => {
@@ -538,8 +563,17 @@ function placeHostsUnderParents(
       const left = col.items.filter((item) => item.parentPort % 2 === 1);
       const right = col.items.filter((item) => item.parentPort % 2 === 0);
       const startY = col.bottom + HOST_DROP;
-      const leftX = col.colX - SIDE_GAP - HOST_W;
-      const rightX = col.colX + NODE_W + SIDE_GAP;
+      // Keep host rails inside the leaf-pair footprint that owns this stack.
+      const bounds = leafPairBoundsForColumn(
+        col.items[0].parent,
+        links,
+        byName,
+        positions,
+      );
+      const pairLeft = bounds?.left ?? col.colX - HOST_W;
+      const pairRight = bounds?.right ?? col.colX + NODE_W + HOST_W;
+      const leftX = pairLeft;
+      const rightX = pairRight - HOST_W;
       maxBottom = Math.max(
         maxBottom,
         stackSide(left, leftX, startY),
@@ -726,11 +760,8 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       peerGroupsWidth(leafGroups),
       rowWidth(bb.length),
     ];
-    // Side-rail hosts need narrow host columns on both sides of the mleaf stack.
-    const width =
-      Math.max(...rowWidths, NODE_W) +
-      SITE_PAD * 2 +
-      (host.length ? (HOST_W + 56) * 2 : 0);
+    // Hosts fit inside leaf-pair width, so fabric rows drive site width.
+    const width = Math.max(...rowWidths, NODE_W) + SITE_PAD * 2;
     const mleafBlockH =
       mleafDepth > 0
         ? MLEAF_DROP +
@@ -1295,10 +1326,17 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const t = (slot + 1) / (slots + 1);
       const parentSide: Side = rail === "left" ? "left" : "right";
       const hostSide: Side = rail === "left" ? "right" : "left";
+      // Place lanes in the gap between host face and mleaf face.
+      const gapOuter =
+        rail === "left" ? hostPos.x + HOST_W : parentPos.x + NODE_W;
+      const gapInner = rail === "left" ? parentPos.x : hostPos.x;
+      const gap = Math.max(0, gapInner - gapOuter);
+      const laneCount = Math.max(
+        1,
+        [...parentLane.keys()].filter((k) => k.startsWith(`${rail}:`)).length,
+      );
       const laneX =
-        rail === "left"
-          ? parentPos.x - 14 - lane * 14
-          : parentPos.x + NODE_W + 14 + lane * 14;
+        gapOuter + (gap * (lane + 1)) / (laneCount + 1);
       const parentAnchor =
         rail === "left"
           ? {
