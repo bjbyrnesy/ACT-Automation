@@ -22,6 +22,30 @@ const ROLE_FILL: Record<NodeRole, string> = {
   host: "#c2410c",
 };
 
+/** Compact geometric Tux mark for generic/linux host boxes. */
+function HostPenguin({ x, y }: { x: number; y: number }) {
+  return (
+    <g
+      className="cv-diagram__host-penguin"
+      transform={`translate(${x}, ${y})`}
+      aria-hidden="true"
+    >
+      {/* body */}
+      <ellipse cx="9" cy="12" rx="7.2" ry="9.2" fill="#0f172a" />
+      {/* belly */}
+      <ellipse cx="9" cy="14.2" rx="4.4" ry="5.8" fill="#f8fafc" />
+      {/* eye */}
+      <circle cx="6.6" cy="8.2" r="1.35" fill="#ffffff" />
+      <circle cx="6.9" cy="8.2" r="0.55" fill="#0f172a" />
+      {/* beak */}
+      <path d="M5.2 10.2 L1.6 11.2 L5.2 12.2 Z" fill="#f59e0b" />
+      {/* feet */}
+      <ellipse cx="6.2" cy="20.6" rx="2.2" ry="1.1" fill="#f59e0b" />
+      <ellipse cx="11.8" cy="20.6" rx="2.2" ry="1.1" fill="#f59e0b" />
+    </g>
+  );
+}
+
 export function CvDiagram({
   yamlText,
   emptyLabel = "No topology to draw.",
@@ -264,57 +288,73 @@ function SvgCanvas({ layout, zoom }: { layout: CvLayout; zoom: number }) {
         />
       ))}
 
-      {layout.nodes.map((node) => (
-        <g key={node.name}>
-          <rect
-            x={node.x}
-            y={node.y}
-            width={node.w}
-            height={node.h}
-            rx={node.role === "host" ? 6 : 0}
-            fill={ROLE_FILL[node.role]}
-            className={
-              node.role === "host"
-                ? "cv-diagram__node cv-diagram__node--host"
-                : "cv-diagram__node"
-            }
-          />
-          <text
-            x={node.x + node.w / 2}
-            y={node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4)}
-            className="cv-diagram__node-title"
-          >
-            {node.title}
-          </text>
-          {node.subtitle ? (
+      {layout.nodes.map((node) => {
+        const isHost = node.role === "host";
+        const titleX = isHost ? node.x + 24 : node.x + node.w / 2;
+        const titleY = node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4);
+        return (
+          <g key={node.name}>
+            <rect
+              x={node.x}
+              y={node.y}
+              width={node.w}
+              height={node.h}
+              rx={isHost ? 6 : 0}
+              fill={ROLE_FILL[node.role]}
+              className={
+                isHost
+                  ? "cv-diagram__node cv-diagram__node--host"
+                  : "cv-diagram__node"
+              }
+            />
+            {isHost ? (
+              <HostPenguin x={node.x + 3} y={node.y + node.h / 2 - 11} />
+            ) : null}
             <text
-              x={node.x + node.w / 2}
-              y={node.y + node.h / 2 + 12}
-              className="cv-diagram__node-sub"
+              x={titleX}
+              y={titleY}
+              className={
+                isHost
+                  ? "cv-diagram__node-title cv-diagram__node-title--host"
+                  : "cv-diagram__node-title"
+              }
             >
-              {node.subtitle}
+              {node.title}
             </text>
-          ) : null}
-          {node.ports.map((port) => (
-            <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
-              <rect
-                x={port.x}
-                y={port.y}
-                width={22}
-                height={14}
-                className="cv-diagram__port"
-              />
+            {node.subtitle ? (
               <text
-                x={port.x + 11}
-                y={port.y + 11}
-                className="cv-diagram__port-label"
+                x={titleX}
+                y={node.y + node.h / 2 + 12}
+                className={
+                  isHost
+                    ? "cv-diagram__node-sub cv-diagram__node-sub--host"
+                    : "cv-diagram__node-sub"
+                }
               >
-                {port.port}
+                {node.subtitle}
               </text>
-            </g>
-          ))}
-        </g>
-      ))}
+            ) : null}
+            {node.ports.map((port) => (
+              <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
+                <rect
+                  x={port.x}
+                  y={port.y}
+                  width={22}
+                  height={14}
+                  className="cv-diagram__port"
+                />
+                <text
+                  x={port.x + 11}
+                  y={port.y + 11}
+                  className="cv-diagram__port-label"
+                >
+                  {port.port}
+                </text>
+              </g>
+            ))}
+          </g>
+        );
+      })}
     </svg>
   );
 }
