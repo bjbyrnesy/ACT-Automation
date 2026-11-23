@@ -222,12 +222,33 @@
   stroke-width: 1;
 }
 
+/* Host attachments — match dashed host uplinks. */
+.cv-diagram__port--host {
+  fill: #fdba74;
+  stroke: #9a3412;
+}
+
+/* Leaf↔mleaf uplinks — cool slate vs warm host ports. */
+.cv-diagram__port--uplink {
+  fill: #cbd5e1;
+  stroke: #334155;
+}
+
+.cv-diagram__port--peer {
+  fill: #e2e8f0;
+  stroke: #1e293b;
+}
+
 .cv-diagram__port-label {
   fill: #0f172a;
   font-size: 9px;
   font-family: ui-sans-serif, system-ui, sans-serif;
   font-weight: 600;
   text-anchor: middle;
+}
+
+.cv-diagram__port-label--host {
+  fill: #7c2d12;
 }
 
 .cv-diagram__empty {

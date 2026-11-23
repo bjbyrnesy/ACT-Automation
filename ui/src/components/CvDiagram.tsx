@@ -473,12 +473,12 @@ function SvgCanvas({
                   y={port.y}
                   width={22}
                   height={14}
-                  className="cv-diagram__port"
+                  className={`cv-diagram__port cv-diagram__port--${port.kind}`}
                 />
                 <text
                   x={port.x + 11}
                   y={port.y + 11}
-                  className="cv-diagram__port-label"
+                  className={`cv-diagram__port-label cv-diagram__port-label--${port.kind}`}
                 >
                   {port.port}
                 </text>

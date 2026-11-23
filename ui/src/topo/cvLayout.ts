@@ -10,12 +10,16 @@ import type { NodeRole, TopologyNode } from "./summary";
 
 export type Side = "top" | "bottom" | "left" | "right";
 
+/** Port chrome kind — host attachments are colored differently from fabric/uplinks. */
+export type PortKind = "fabric" | "peer" | "uplink" | "host";
+
 export type LaidPort = {
   port: number;
   side: Side;
   x: number;
   y: number;
   peerName: string;
+  kind: PortKind;
 };
 
 export type LaidNode = {
@@ -927,6 +931,35 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     return list;
   };
 
+  /**
+   * Pick a Y for a side port that does not collide with ports already on that
+   * face (e.g. mleaf uplink elbow + host rail both wanting mid-height).
+   */
+  const freePortY = (
+    name: string,
+    side: Side,
+    nodeY: number,
+    preferredY: number,
+  ): number => {
+    const minGap = PORT_H + 4;
+    const lo = nodeY + 2;
+    const hi = nodeY + NODE_H - PORT_H - 2;
+    const preferred = Math.min(hi, Math.max(lo, preferredY));
+    const taken = (portsByNode.get(name) ?? [])
+      .filter((p) => p.side === side)
+      .map((p) => p.y);
+    const blocked = (y: number) =>
+      taken.some((ty) => Math.abs(ty - y) < minGap);
+    if (!blocked(preferred)) return preferred;
+    for (let step = minGap; step <= NODE_H; step += minGap) {
+      for (const cand of [preferred + step, preferred - step]) {
+        const y = Math.min(hi, Math.max(lo, cand));
+        if (!blocked(y)) return y;
+      }
+    }
+    return preferred;
+  };
+
   const sideSlots = new Map<string, Record<Side, number>>();
   const nextSlot = (name: string, side: Side) => {
     let slots = sideSlots.get(name);
@@ -1101,6 +1134,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: leftAnchor.x,
         y: leftAnchor.y,
         peerName: rightName,
+        kind: "peer",
       });
       ensurePorts(rightName).push({
         port: rightPort,
@@ -1108,6 +1142,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: rightAnchor.x,
         y: rightAnchor.y,
         peerName: leftName,
+        kind: "peer",
       });
 
       const id = `${link.aNode}:${link.aPort}-${link.bNode}:${link.bPort}`;
@@ -1207,6 +1242,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
               x: leafAnchor.x,
               y: leafAnchor.y,
               peerName: mleafName,
+              kind: "uplink",
             });
             ensurePorts(mleafName).push({
               port: mleafPort,
@@ -1214,6 +1250,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
               x: mleafAnchor.x,
               y: mleafAnchor.y,
               peerName: leafName,
+              kind: "uplink",
             });
             const leafFace = outerAttach(leafAnchor, "bottom");
             const mleafFace = outerAttach(mleafAnchor, "top");
@@ -1223,17 +1260,18 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           }
 
           // Deeper stack: vertical from leaf, then 90° into mleaf side.
+          // Sit near the top of the face so host rails can own mid/lower.
           const side: Side = leafName === stack.leftLeaf ? "left" : "right";
+          const uplinkY = freePortY(
+            mleafName,
+            side,
+            mPos.y,
+            mPos.y + 4,
+          );
           const mleafAnchor =
             side === "left"
-              ? {
-                  x: mPos.x - PORT_W,
-                  y: mPos.y + NODE_H / 2 - PORT_H / 2,
-                }
-              : {
-                  x: mPos.x + NODE_W,
-                  y: mPos.y + NODE_H / 2 - PORT_H / 2,
-                };
+              ? { x: mPos.x - PORT_W, y: uplinkY }
+              : { x: mPos.x + NODE_W, y: uplinkY };
 
           ensurePorts(leafName).push({
             port: leafPort,
@@ -1241,6 +1279,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
             x: leafAnchor.x,
             y: leafAnchor.y,
             peerName: mleafName,
+            kind: "uplink",
           });
           ensurePorts(mleafName).push({
             port: mleafPort,
@@ -1248,6 +1287,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
             x: mleafAnchor.x,
             y: mleafAnchor.y,
             peerName: leafName,
+            kind: "uplink",
           });
 
           const leafFace = outerAttach(leafAnchor, "bottom");
@@ -1351,16 +1391,17 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       );
       const laneX =
         gapOuter + (gap * (lane + 1)) / (laneCount + 1);
+      // Prefer mid/lower on the parent face; freePortY skips uplink elbows.
+      const parentY = freePortY(
+        parentNode.name,
+        parentSide,
+        parentPos.y,
+        parentPos.y + NODE_H * Math.max(0.55, t) - PORT_H / 2,
+      );
       const parentAnchor =
         rail === "left"
-          ? {
-              x: parentPos.x - PORT_W,
-              y: parentPos.y + NODE_H * t - PORT_H / 2,
-            }
-          : {
-              x: parentPos.x + NODE_W,
-              y: parentPos.y + NODE_H * t - PORT_H / 2,
-            };
+          ? { x: parentPos.x - PORT_W, y: parentY }
+          : { x: parentPos.x + NODE_W, y: parentY };
       const hostAnchor =
         rail === "left"
           ? {
@@ -1378,6 +1419,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: parentAnchor.x,
         y: parentAnchor.y,
         peerName: hostNode.name,
+        kind: "host",
       });
       ensurePorts(hostNode.name).push({
         port: hostPort,
@@ -1385,6 +1427,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: hostAnchor.x,
         y: hostAnchor.y,
         peerName: parentNode.name,
+        kind: "host",
       });
 
       const parentFace = outerAttach(parentAnchor, parentSide);
@@ -1421,6 +1464,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: parentAnchor.x,
         y: parentAnchor.y,
         peerName: hostNode.name,
+        kind: "host",
       });
       ensurePorts(hostNode.name).push({
         port: hostPort,
@@ -1428,6 +1472,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         x: hostAnchor.x,
         y: hostAnchor.y,
         peerName: parentNode.name,
+        kind: "host",
       });
 
       const parentFace = outerAttach(parentAnchor, "bottom");
@@ -1454,6 +1499,15 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     const id = `${link.aNode}:${link.aPort}-${link.bNode}:${link.bPort}`;
     if (placedIds.has(id)) continue;
 
+    const aNode = byName[link.aNode]!;
+    const bNode = byName[link.bNode]!;
+    const kind: PortKind =
+      aNode.role === "host" || bNode.role === "host"
+        ? "host"
+        : aNode.role === "mleaf" || bNode.role === "mleaf"
+          ? "uplink"
+          : "fabric";
+
     const ap = positions.get(link.aNode)!;
     const bp = positions.get(link.bNode)!;
     const aTotal = totals.get(link.aNode)?.[aSide] ?? 1;
@@ -1474,6 +1528,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       x: aAnchor.x,
       y: aAnchor.y,
       peerName: link.bNode,
+      kind,
     });
     ensurePorts(link.bNode).push({
       port: link.bPort,
@@ -1481,6 +1536,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       x: bAnchor.x,
       y: bAnchor.y,
       peerName: link.aNode,
+      kind,
     });
 
     // Face → stub → stub → face keeps the join in the middle of the port.

@@ -47,6 +47,25 @@ assert(
   `expected host subtitle with switchport (mleafN:etN), got ${host.subtitle}`,
 );
 
+// Host rails must not cover leaf↔mleaf uplink elbows on the same face.
+for (const node of lay.nodes) {
+  for (const side of ["left", "right"] as const) {
+    const hosts = node.ports.filter((p) => p.side === side && p.kind === "host");
+    const uplinks = node.ports.filter(
+      (p) => p.side === side && p.kind === "uplink",
+    );
+    for (const hostPort of hosts) {
+      for (const up of uplinks) {
+        const dy = Math.abs(hostPort.y - up.y);
+        assert(
+          dy >= 14,
+          `${node.name} ${side}: host et${hostPort.port} covers uplink et${up.port} (dy=${dy})`,
+        );
+      }
+    }
+  }
+}
+
 const mlag = lay.domains.filter((d) => d.kind === "mlag");
 assert(mlag.length >= 1, "expected MLAG domains");
 
