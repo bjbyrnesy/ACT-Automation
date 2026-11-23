@@ -107,10 +107,14 @@ htmlcov/
 pip-wheel-metadata/
 
 # ---------------------------------------------------------------------------
-# Node / SPA (source under ui/; built assets live in acta/web/static/)
+# Node / SPA (source under ui/; build into acta/web/static/ — do not commit)
 # ---------------------------------------------------------------------------
 node_modules/
 ui/dist/
+# Vite output copied by scripts/build-ui.sh (keep only .gitkeep tracked)
+acta/web/static/**
+!acta/web/static/.gitkeep
+.playwright-mcp/
 
 # ---------------------------------------------------------------------------
 # Editors / OS
