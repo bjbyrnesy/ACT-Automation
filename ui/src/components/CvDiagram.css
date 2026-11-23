@@ -22,6 +22,21 @@
   font-size: 12px;
 }
 
+.cv-diagram__toolbar button.is-active {
+  background: var(--accent, #1d4ed8);
+  color: #fff;
+  border-color: transparent;
+}
+
+.cv-diagram__frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .cv-diagram__pct {
   min-width: 3.2em;
   text-align: center;
@@ -48,8 +63,36 @@
   cursor: grabbing;
 }
 
+.cv-diagram__viewport.is-loupe {
+  cursor: none;
+}
+
+.cv-diagram__viewport.is-loupe.is-dragging {
+  cursor: none;
+}
+
 .cv-diagram__stage {
   position: relative;
+}
+
+.cv-diagram__loupe {
+  position: absolute;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 4;
+  border: 2px solid #0f172a;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.7),
+    0 10px 28px rgba(15, 23, 42, 0.35);
+  background: #f8fafc;
+}
+
+.cv-diagram__loupe-inner {
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .cv-diagram__svg {
