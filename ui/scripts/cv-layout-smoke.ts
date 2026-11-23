@@ -26,6 +26,10 @@ assert(peerGap === 80, `expected PEER_GAP 80, got ${peerGap}`);
 
 const mleaf = lay.nodes.find((n) => n.name.includes("B-mleaf1"));
 assert(mleaf, "missing B-mleaf1");
+assert(
+  mleaf.w < leaf1.w,
+  `mleaf should be narrower than leaf (${mleaf.w} vs ${leaf1.w})`,
+);
 const pairMid = (leaf1.x + leaf2.x + leaf2.w) / 2;
 const mMid = mleaf.x + mleaf.w / 2;
 assert(Math.abs(pairMid - mMid) < 0.5, `mleaf not centered (${pairMid} vs ${mMid})`);
@@ -37,7 +41,7 @@ assert(
 const host = lay.nodes.find((n) => n.name === "bar");
 assert(host, "missing host bar");
 // bar → B-mleaf1:et9 (odd) → left rail of the leaf-pair footprint.
-assert(host.w < mleaf.w, `expected narrow host width, got ${host.w}`);
+assert(host.w === 88, `expected host width 88, got ${host.w}`);
 assert(
   Math.abs(host.x - leaf1.x) < 0.5,
   `mleaf host should sit on left rail (odd et), got x=${host.x} pairLeft=${leaf1.x}`,
@@ -81,6 +85,10 @@ assert(
 // Dual-home legs must not cut through the mleaf box (segment sample).
 const aMleaf = lay.nodes.find((n) => n.name.includes("A-mleaf1"));
 assert(aMleaf, "missing A-mleaf1");
+assert(
+  aMleaf.w < aLeaf1.w,
+  `A-mleaf should be narrower than leaf (${aMleaf.w} vs ${aLeaf1.w})`,
+);
 const fooLinks = lay.links.filter(
   (l) => l.aName === "foo" || l.bName === "foo",
 );
@@ -102,6 +110,67 @@ for (const link of fooLinks) {
         `foo link segment crosses A-mleaf1 at (${x.toFixed(1)},${y.toFixed(1)})`,
       );
     }
+  }
+}
+
+// First dual-home must not sit on the far outer bottom corners of the leaves.
+for (const leaf of [aLeaf1, aLeaf2]) {
+  const hostPorts = leaf.ports.filter((p) => p.side === "bottom" && p.kind === "host");
+  assert(hostPorts.length >= 1, `${leaf.name} missing dual-home bottom port`);
+  for (const port of hostPorts) {
+    const onFarOuter =
+      Math.abs(port.x - leaf.x) <= 6 ||
+      Math.abs(port.x + 22 - (leaf.x + leaf.w)) <= 6;
+    assert(
+      !onFarOuter,
+      `${leaf.name} dual-home port still on far outer edge (x=${port.x}, leaf=${leaf.x}..${leaf.x + leaf.w})`,
+    );
+  }
+}
+
+// foobar ↔ mleaf: leave port face center with a short stub (≤8px), not a long
+// unused horizontal at the switchport.
+const foobarLink = lay.links.find(
+  (l) =>
+    (l.aName === "foobar" && l.bName.includes("A-mleaf1")) ||
+    (l.bName === "foobar" && l.aName.includes("A-mleaf1")),
+);
+assert(foobarLink, "missing foobar↔A-mleaf1 link");
+{
+  const mleafPort = aMleaf.ports.find((p) => p.kind === "host" && p.side === "left");
+  assert(mleafPort, "A-mleaf1 missing left host port");
+  const faceY = mleafPort.y + 14 / 2;
+  const faceX = mleafPort.x; // left face
+  const start = foobarLink.points[0];
+  const nearMleaf =
+    Math.abs(start.x - faceX) < Math.abs(foobarLink.points[foobarLink.points.length - 1].x - faceX)
+      ? start
+      : foobarLink.points[foobarLink.points.length - 1];
+  assert(
+    Math.abs(nearMleaf.y - faceY) <= 1,
+    `foobar link should hit mleaf et center (y=${nearMleaf.y} vs face ${faceY})`,
+  );
+  const second = foobarLink.points[1];
+  const stubLen = Math.hypot(second.x - nearMleaf.x, second.y - nearMleaf.y);
+  assert(stubLen <= 8, `mleaf host stub too long (${stubLen})`);
+}
+
+// Dual-home: no long horizontal jog at the leaf-bottom stub row.
+for (const link of fooLinks) {
+  const leafEnd = link.points[0];
+  const next = link.points[1];
+  const third = link.points[2];
+  assert(next, "foo link too short");
+  // First step is a short vertical stub.
+  assert(
+    Math.abs(next.x - leafEnd.x) <= 1 && next.y > leafEnd.y,
+    "foo dual-home should stub vertically off the leaf port",
+  );
+  if (third) {
+    assert(
+      Math.abs(third.x - next.x) <= 1 || third.y > next.y + 4,
+      "foo dual-home should not take a long horizontal at the leaf bottom",
+    );
   }
 }
 
