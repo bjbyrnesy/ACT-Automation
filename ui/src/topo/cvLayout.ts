@@ -1674,21 +1674,33 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           pairColumnBottom(leftLeaf, rightLeaf, positions, byName) + 10,
         ),
       );
-      // Keep the drop outside the centered mleaf footprint.
-      const mleafHalf = MLEAF_W / 2 + 8;
-      const bypassX = isLeft
-        ? Math.min(parentStub.x, pairCx - mleafHalf)
-        : Math.max(parentStub.x, pairCx + mleafHalf);
+      const mleafLeft = pairCx - MLEAF_W / 2 - 2;
+      const mleafRight = pairCx + MLEAF_W / 2 + 2;
+      const clearsMleaf = isLeft
+        ? parentStub.x < mleafLeft
+        : parentStub.x > mleafRight;
+      // Inward leaf seats already clear the narrow mleaf — drop straight,
+      // then join at the host. No long horizontal at the leaf bottom.
       const path: LaidPoint[] = [parentFace, parentStub];
-      if (Math.abs(bypassX - parentStub.x) >= 2) {
-        path.push({ x: bypassX, y: parentStub.y });
+      if (clearsMleaf) {
+        path.push(
+          { x: parentStub.x, y: clearY },
+          { x: hostFace.x, y: clearY },
+          hostFace,
+        );
+      } else {
+        const bypassX = isLeft
+          ? Math.min(parentStub.x, mleafLeft)
+          : Math.max(parentStub.x, mleafRight);
+        if (Math.abs(bypassX - parentStub.x) >= 2) {
+          path.push({ x: bypassX, y: parentStub.y });
+        }
+        path.push(
+          { x: bypassX, y: clearY },
+          { x: hostFace.x, y: clearY },
+          hostFace,
+        );
       }
-      path.push(
-        { x: bypassX, y: clearY },
-        { x: isLeft ? pairCx - 6 : pairCx + 6, y: clearY },
-        { x: hostFace.x, y: clearY },
-        hostFace,
-      );
       linkEndpoints.set(id, path);
       let po = dualHomePo.find((p) => p.host === hostNode.name);
       if (!po) {
@@ -1747,12 +1759,15 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       });
 
       const parentFace = outerAttach(parentAnchor, parentSide);
-      const parentStub = stubFrom(parentFace, parentSide);
       const hostFace = outerAttach(hostAnchor, hostSide);
+      // Leave mleaf etN at face center with a short stub, drop, then into the
+      // host port — avoid a long unused horizontal off the switchport.
+      const laneX =
+        rail === "left" ? parentFace.x - 6 : parentFace.x + 6;
       linkEndpoints.set(id, [
         parentFace,
-        parentStub,
-        { x: hostFace.x, y: parentStub.y },
+        { x: laneX, y: parentFace.y },
+        { x: laneX, y: hostFace.y },
         hostFace,
       ]);
     } else {
