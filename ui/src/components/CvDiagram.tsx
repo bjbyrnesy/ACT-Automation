@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseTopologyGraph } from "../topo/graph";
 import { layoutCvDiagram, type CvLayout } from "../topo/cvLayout";
 import type { NodeRole } from "../topo/summary";
+// Official Tux (Larry Ewing) — see ui/src/assets/TUX_ATTRIBUTION.txt
+import tuxUrl from "../assets/tux.svg";
 import "./CvDiagram.css";
 
 type Props = {
@@ -13,6 +15,12 @@ const ZOOM_STEP = 1.25;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 4;
 
+/** Reserved left strip for Tux so hostname text never draws under the logo. */
+const HOST_ICON_SLOT = 22;
+const HOST_ICON_PAD = 3;
+const HOST_ICON_W = 16;
+const HOST_ICON_H = 19;
+
 const ROLE_FILL: Record<NodeRole, string> = {
   bb: "#0f766e",
   border: "#4338ca",
@@ -21,6 +29,22 @@ const ROLE_FILL: Record<NodeRole, string> = {
   mleaf: "#7c3aed",
   host: "#c2410c",
 };
+
+/** Official Tux mark (Larry Ewing) sized for narrow host boxes. */
+function HostTux({ x, y }: { x: number; y: number }) {
+  return (
+    <image
+      className="cv-diagram__host-tux"
+      href={tuxUrl}
+      x={x}
+      y={y}
+      width={HOST_ICON_W}
+      height={HOST_ICON_H}
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+    />
+  );
+}
 
 export function CvDiagram({
   yamlText,
@@ -264,57 +288,93 @@ function SvgCanvas({ layout, zoom }: { layout: CvLayout; zoom: number }) {
         />
       ))}
 
-      {layout.nodes.map((node) => (
-        <g key={node.name}>
-          <rect
-            x={node.x}
-            y={node.y}
-            width={node.w}
-            height={node.h}
-            rx={node.role === "host" ? 6 : 0}
-            fill={ROLE_FILL[node.role]}
-            className={
-              node.role === "host"
-                ? "cv-diagram__node cv-diagram__node--host"
-                : "cv-diagram__node"
-            }
-          />
-          <text
-            x={node.x + node.w / 2}
-            y={node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4)}
-            className="cv-diagram__node-title"
-          >
-            {node.title}
-          </text>
-          {node.subtitle ? (
-            <text
-              x={node.x + node.w / 2}
-              y={node.y + node.h / 2 + 12}
-              className="cv-diagram__node-sub"
-            >
-              {node.subtitle}
-            </text>
-          ) : null}
-          {node.ports.map((port) => (
-            <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
-              <rect
-                x={port.x}
-                y={port.y}
-                width={22}
-                height={14}
-                className="cv-diagram__port"
-              />
+      {layout.nodes.map((node) => {
+        const isHost = node.role === "host";
+        const textLeft = node.x + HOST_ICON_SLOT;
+        const textWidth = Math.max(8, node.w - HOST_ICON_SLOT - 4);
+        const titleX = isHost ? textLeft : node.x + node.w / 2;
+        const titleY = node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4);
+        const clipId = isHost
+          ? `host-text-${node.name.replace(/[^A-Za-z0-9_-]/g, "_")}`
+          : null;
+        return (
+          <g key={node.name}>
+            <rect
+              x={node.x}
+              y={node.y}
+              width={node.w}
+              height={node.h}
+              rx={isHost ? 6 : 0}
+              fill={ROLE_FILL[node.role]}
+              className={
+                isHost
+                  ? "cv-diagram__node cv-diagram__node--host"
+                  : "cv-diagram__node"
+              }
+            />
+            {isHost ? (
+              <>
+                <HostTux
+                  x={node.x + HOST_ICON_PAD}
+                  y={node.y + (node.h - HOST_ICON_H) / 2}
+                />
+                <clipPath id={clipId!}>
+                  <rect
+                    x={textLeft}
+                    y={node.y}
+                    width={textWidth}
+                    height={node.h}
+                  />
+                </clipPath>
+              </>
+            ) : null}
+            <g clipPath={clipId ? `url(#${clipId})` : undefined}>
               <text
-                x={port.x + 11}
-                y={port.y + 11}
-                className="cv-diagram__port-label"
+                x={titleX}
+                y={titleY}
+                className={
+                  isHost
+                    ? "cv-diagram__node-title cv-diagram__node-title--host"
+                    : "cv-diagram__node-title"
+                }
               >
-                {port.port}
+                {node.title}
               </text>
+              {node.subtitle ? (
+                <text
+                  x={titleX}
+                  y={node.y + node.h / 2 + 12}
+                  className={
+                    isHost
+                      ? "cv-diagram__node-sub cv-diagram__node-sub--host"
+                      : "cv-diagram__node-sub"
+                  }
+                >
+                  {node.subtitle}
+                </text>
+              ) : null}
             </g>
-          ))}
-        </g>
-      ))}
+            {node.ports.map((port) => (
+              <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
+                <rect
+                  x={port.x}
+                  y={port.y}
+                  width={22}
+                  height={14}
+                  className="cv-diagram__port"
+                />
+                <text
+                  x={port.x + 11}
+                  y={port.y + 11}
+                  className="cv-diagram__port-label"
+                >
+                  {port.port}
+                </text>
+              </g>
+            ))}
+          </g>
+        );
+      })}
     </svg>
   );
 }
