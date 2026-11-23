@@ -1218,14 +1218,40 @@ links:
 
     def test_resolve_clab_runtime_falls_back_to_docker(self):
         def fake_run(host, script, argv, data):
-            engine = argv[0]
-            ok = engine in {"docker", "sudo-docker"}
-            return subprocess.CompletedProcess(
-                [], 0 if ok else 1, "", "" if ok else "no podman"
-            )
+            if script is clab.RUNTIME_PROBE_SCRIPT:
+                engine = argv[0]
+                ok = engine in {"docker", "sudo-docker"}
+                return subprocess.CompletedProcess(
+                    [], 0 if ok else 1, "", "" if ok else "no podman"
+                )
+            return subprocess.CompletedProcess([], 1, "", "unused")
 
         with mock.patch("acta.clab.support.host_run", side_effect=fake_run):
             self.assertEqual(clab.resolve_clab_runtime("lab", None), "docker")
+
+    def test_resolve_clab_runtime_uses_which_when_probes_fail(self):
+        """Broken/stub podman must not win when only docker is installed."""
+
+        def fake_run(host, script, argv, data):
+            if script is clab.RUNTIME_PROBE_SCRIPT:
+                return subprocess.CompletedProcess([], 1, "", "cannot connect")
+            if script is clab.RUNTIME_WHICH_SCRIPT:
+                return subprocess.CompletedProcess([], 0, "docker\n", "")
+            return subprocess.CompletedProcess([], 1, "", "")
+
+        with mock.patch("acta.clab.support.host_run", side_effect=fake_run):
+            self.assertEqual(clab.resolve_clab_runtime("lab", None), "docker")
+
+    def test_resolve_clab_runtime_which_prefers_docker_when_both_broken(self):
+        def fake_run(host, script, argv, data):
+            if script is clab.RUNTIME_PROBE_SCRIPT:
+                return subprocess.CompletedProcess([], 1, "", "socket missing")
+            if script is clab.RUNTIME_WHICH_SCRIPT:
+                return subprocess.CompletedProcess([], 0, "docker\n", "")
+            return subprocess.CompletedProcess([], 1, "", "")
+
+        with mock.patch("acta.clab.support.host_run", side_effect=fake_run):
+            self.assertEqual(clab.resolve_clab_runtime(None, None), "docker")
 
     def test_finds_lab_in_docker_when_podman_is_empty(self):
         lab = {

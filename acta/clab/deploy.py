@@ -125,8 +125,10 @@ def deploy(args):
             fail(f"Could not install viewer annotations: {result.stderr.strip()}")
         if result.stdout:
             print(result.stdout, end="")
-    runtime = resolve_clab_runtime(args.host, getattr(args, "runtime", None))
-    print(f"Using container runtime: {runtime}")
+    requested = getattr(args, "runtime", None)
+    runtime = resolve_clab_runtime(args.host, requested)
+    how = "explicit" if requested in ("docker", "podman") else "auto-detect"
+    print(f"Using container runtime: {runtime} ({how})")
     result = host_run(
         args.host,
         DEPLOY_SCRIPT,

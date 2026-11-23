@@ -15,14 +15,33 @@ const CLAB_ACTIONS: { value: ClabAction; label: string }[] = [
   { value: "onboard", label: "Onboard" },
 ];
 
+const RUNTIME_STORAGE_KEY = "acta.clab.runtime";
+
 function asRuntime(raw: unknown): RuntimeChoice {
   return raw === "docker" || raw === "podman" ? raw : "";
+}
+
+function readStoredRuntime(): RuntimeChoice {
+  try {
+    return asRuntime(window.localStorage.getItem(RUNTIME_STORAGE_KEY));
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredRuntime(value: RuntimeChoice) {
+  try {
+    if (value) window.localStorage.setItem(RUNTIME_STORAGE_KEY, value);
+    else window.localStorage.removeItem(RUNTIME_STORAGE_KEY);
+  } catch {
+    /* ignore quota / private mode */
+  }
 }
 
 export function DeployPage() {
   const { active } = useActiveTopology();
   const [host, setHost] = useState("");
-  const [runtime, setRuntime] = useState<RuntimeChoice>("");
+  const [runtime, setRuntime] = useState<RuntimeChoice>(() => readStoredRuntime());
   const [fromAct, setFromAct] = useState(true);
   const [tenant, setTenant] = useState("");
   const [deployAfterUpload, setDeployAfterUpload] = useState(false);
@@ -37,7 +56,10 @@ export function DeployPage() {
         if (!response.ok) return;
         const body = (await response.json()) as Record<string, unknown>;
         if (cancelled) return;
-        setRuntime(asRuntime(body.CLAB_RUNTIME));
+        const stored = readStoredRuntime();
+        const fromSettings = asRuntime(body.CLAB_RUNTIME);
+        // Prefer an explicit local choice, then Settings, else Auto.
+        setRuntime(stored || fromSettings);
         const configuredHost = String(body.CLAB_HOST ?? "").trim();
         if (configuredHost) setHost(configuredHost);
       })
@@ -48,6 +70,21 @@ export function DeployPage() {
       cancelled = true;
     };
   }, []);
+
+  function onRuntimeChange(value: string) {
+    const next = asRuntime(value);
+    setRuntime(next);
+    writeStoredRuntime(next);
+    // Persist explicit choices to Settings so destroy/redeploy keep the same
+    // runtime after navigation; clearing Auto also clears CLAB_RUNTIME.
+    void fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ CLAB_RUNTIME: next }),
+    }).catch(() => {
+      /* localStorage still keeps the choice for this browser */
+    });
+  }
 
   async function runClab(action: ClabAction) {
     if (!active.path || busy) return;
@@ -109,17 +146,17 @@ export function DeployPage() {
           Container runtime
           <select
             value={runtime}
-            onChange={(event) => setRuntime(asRuntime(event.target.value))}
+            onChange={(event) => onRuntimeChange(event.target.value)}
           >
-            <option value="">Auto (Settings, else detect)</option>
+            <option value="">Auto (detect on lab host)</option>
             <option value="docker">docker</option>
             <option value="podman">podman</option>
           </select>
         </label>
         <p className="ops-form__hint">
-          Same as CLI <code>--runtime</code>. Leave Auto to use{" "}
-          <code>CLAB_RUNTIME</code> from Settings, or probe the lab host
-          (podman if present, otherwise docker).
+          Choice is saved to Settings / this browser so Deploy and Destroy stay
+          aligned. Auto probes the lab host; Docker-only hosts should pick{" "}
+          <code>docker</code> if Auto still mis-detects.
         </p>
         <label className="ops-form__check">
           <input
