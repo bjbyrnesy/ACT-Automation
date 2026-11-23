@@ -36,16 +36,35 @@ assert(
 
 const host = lay.nodes.find((n) => n.name === "bar");
 assert(host, "missing host bar");
-const hostMid = host.x + host.w / 2;
-assert(
-  Math.abs(hostMid - mMid) < 0.5,
-  `host not centered under mleaf (${hostMid} vs ${mMid})`,
-);
+// bar → B-mleaf1:et9 (odd) → left rail of the leaf-pair footprint.
 assert(host.w < mleaf.w, `expected narrow host width, got ${host.w}`);
+assert(
+  Math.abs(host.x - leaf1.x) < 0.5,
+  `mleaf host should sit on left rail (odd et), got x=${host.x} pairLeft=${leaf1.x}`,
+);
 assert(
   host.subtitle != null && /:et\d+$/.test(host.subtitle),
   `expected host subtitle with switchport (mleafN:etN), got ${host.subtitle}`,
 );
+assert(host.y >= mleaf.y + mleaf.h, "host must sit below mleaf stack");
+
+// foo is dual-homed to A-leaf1+leaf2 → MLAG centerline + Po mark.
+const foo = lay.nodes.find((n) => n.name === "foo");
+assert(foo, "missing host foo");
+const aLeaf1 = lay.nodes.find((n) => n.name.endsWith("A-leaf1"));
+const aLeaf2 = lay.nodes.find((n) => n.name.endsWith("A-leaf2"));
+assert(aLeaf1 && aLeaf2, "missing A leaf pair");
+const aMid = (aLeaf1.x + aLeaf2.x + aLeaf2.w) / 2;
+assert(
+  Math.abs(foo.x + foo.w / 2 - aMid) < 0.5,
+  `dual-home foo should sit on MLAG centerline (${foo.x + foo.w / 2} vs ${aMid})`,
+);
+assert(
+  foo.subtitle != null && foo.subtitle.includes("·"),
+  `dual-home subtitle should list both leaves, got ${foo.subtitle}`,
+);
+const fooPo = lay.bundles.find((b) => b.id === "po-host-foo");
+assert(fooPo, "expected Po bundle for dual-homed foo");
 
 // Host rails must not cover leaf↔mleaf uplink elbows on the same face.
 for (const node of lay.nodes) {
