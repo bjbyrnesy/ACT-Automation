@@ -38,10 +38,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        # ui extra provides FastAPI for web TestClient collection.
+        run: uv sync --extra dev --extra ui
 
       - name: Pre-commit (gitleaks, black, ruff, …)
         run: uv run pre-commit run --all-files
 
       - name: Pytest
-        run: uv run pytest -q --tb=short
+        run: uv run --extra dev --extra ui pytest -q --tb=short

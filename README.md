@@ -48,7 +48,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 cd ACT-Automation
-uv sync --extra dev                 # creates .venv and installs deps + acta
+uv sync --extra dev                 # creates .venv (+ FastAPI for web tests)
 source .venv/bin/activate           # macOS / Linux / WSL
 # .venv\Scripts\activate            # Windows
 ```
