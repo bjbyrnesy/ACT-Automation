@@ -2,12 +2,13 @@ import { useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useActiveTopology } from "../state/activeTopology";
 import { useCreateWizard } from "../state/createWizard";
-import { parseTopologySummary, roleLabel, type NodeRole } from "../topo/summary";
+import { parseTopologyGraph } from "../topo/graph";
+import { roleLabel, type NodeRole, type TopologySummary } from "../topo/summary";
 import { CvDiagram } from "./CvDiagram";
 import { SiteBoxes } from "./SiteBoxes";
 import "./TopologyPane.css";
 
-const ROLE_ORDER: NodeRole[] = ["bb", "border", "spine", "leaf", "mleaf", "other"];
+const ROLE_ORDER: NodeRole[] = ["bb", "border", "spine", "leaf", "mleaf", "host"];
 
 export function TopologyPane() {
   const { pathname } = useLocation();
@@ -16,7 +17,7 @@ export function TopologyPane() {
   const creating = pathname === "/new" || pathname.startsWith("/new/");
   const [showYaml, setShowYaml] = useState(false);
   const summary = useMemo(
-    () => parseTopologySummary(active.yamlText),
+    () => parseTopologyGraph(active.yamlText)?.summary ?? null,
     [active.yamlText],
   );
   const hasYaml = Boolean(active.yamlText);
@@ -122,11 +123,7 @@ function WizardSelections() {
   );
 }
 
-function InventoryBody({
-  summary,
-}: {
-  summary: NonNullable<ReturnType<typeof parseTopologySummary>>;
-}) {
+function InventoryBody({ summary }: { summary: TopologySummary }) {
   return (
     <>
       <dl className="topology-pane__meta">

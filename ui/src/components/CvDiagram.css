@@ -113,7 +113,14 @@
 }
 
 .cv-diagram__link--host {
-  stroke: #0e7490;
+  stroke: #c2410c;
+  stroke-width: 1.8;
+  stroke-dasharray: 5 3;
+}
+
+.cv-diagram__node--host {
+  stroke: #7c2d12;
+  stroke-width: 1.5;
 }
 
 .cv-diagram__link--peer {

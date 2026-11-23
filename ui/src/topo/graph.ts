@@ -1,7 +1,9 @@
 /** Parse ACT topology YAML into a graph for the CV-style diagram. */
 
 import {
+  assignHostSites,
   parseTopologySummary,
+  rebuildSiteIndex,
   type NodeRole,
   type TopologyNode,
   type TopologySummary,
@@ -37,6 +39,9 @@ export function parseTopologyGraph(yamlText: string): TopologyGraph | null {
       bPort: Number(match[4]),
     });
   }
+
+  assignHostSites(summary.nodes, links);
+  rebuildSiteIndex(summary);
 
   const byName: Record<string, TopologyNode> = {};
   for (const node of summary.nodes) {
