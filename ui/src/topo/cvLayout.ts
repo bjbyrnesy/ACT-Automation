@@ -1336,23 +1336,6 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
     hostRoutes.push({ link, hostNode, parentNode, hostPos, parentPos, rail });
   }
 
-  // Lane index per parent on each side (stable by parent Y).
-  const parentLane = new Map<string, number>();
-  for (const side of ["left", "right"] as const) {
-    const parents = [
-      ...new Set(
-        hostRoutes
-          .filter((h) => h.rail === side)
-          .map((h) => h.parentNode.name),
-      ),
-    ].sort((a, b) => {
-      const ay = positions.get(a)?.y ?? 0;
-      const by = positions.get(b)?.y ?? 0;
-      return ay !== by ? ay - by : a.localeCompare(b);
-    });
-    parents.forEach((name, i) => parentLane.set(`${side}:${name}`, i));
-  }
-
   const sideHostSlot = new Map<string, number>();
   const sideHostCount = new Map<string, number>();
   for (const item of hostRoutes) {
@@ -1373,24 +1356,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
 
     if (rail) {
       const laneKey = `${rail}:${parentNode.name}`;
-      const lane = parentLane.get(laneKey) ?? 0;
       const slot = sideHostSlot.get(laneKey) ?? 0;
       sideHostSlot.set(laneKey, slot + 1);
       const slots = sideHostCount.get(laneKey) ?? 1;
       const t = (slot + 1) / (slots + 1);
       const parentSide: Side = rail === "left" ? "left" : "right";
       const hostSide: Side = rail === "left" ? "right" : "left";
-      // Place lanes in the gap between host face and mleaf face.
-      const gapOuter =
-        rail === "left" ? hostPos.x + HOST_W : parentPos.x + NODE_W;
-      const gapInner = rail === "left" ? parentPos.x : hostPos.x;
-      const gap = Math.max(0, gapInner - gapOuter);
-      const laneCount = Math.max(
-        1,
-        [...parentLane.keys()].filter((k) => k.startsWith(`${rail}:`)).length,
-      );
-      const laneX =
-        gapOuter + (gap * (lane + 1)) / (laneCount + 1);
       // Prefer mid/lower on the parent face; freePortY skips uplink elbows.
       const parentY = freePortY(
         parentNode.name,
@@ -1433,15 +1404,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const parentFace = outerAttach(parentAnchor, parentSide);
       const parentStub = stubFrom(parentFace, parentSide);
       const hostFace = outerAttach(hostAnchor, hostSide);
-      const hostStub = stubFrom(hostFace, hostSide);
-      const midTop = { x: laneX, y: parentStub.y };
-      const midBot = { x: laneX, y: hostStub.y };
+      // Dogleg at the parent; vertical bus sits on the host port face so there
+      // is no horizontal stub sticking out of the host Ethernet block.
       linkEndpoints.set(id, [
         parentFace,
         parentStub,
-        midTop,
-        midBot,
-        hostStub,
+        { x: hostFace.x, y: parentStub.y },
         hostFace,
       ]);
     } else {
@@ -1478,18 +1446,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const parentFace = outerAttach(parentAnchor, "bottom");
       const parentStub = stubFrom(parentFace, "bottom");
       const hostFace = outerAttach(hostAnchor, "top");
-      const hostStub = stubFrom(hostFace, "top");
-      if (Math.abs(parentStub.x - hostStub.x) < 2) {
-        linkEndpoints.set(id, [parentFace, parentStub, hostStub, hostFace]);
+      // Elbow at parent height so the final segment is vertical into the host.
+      if (Math.abs(parentStub.x - hostFace.x) < 2) {
+        linkEndpoints.set(id, [parentFace, parentStub, hostFace]);
       } else {
-        const elbow = { x: parentStub.x, y: hostStub.y };
-        linkEndpoints.set(id, [
-          parentFace,
-          parentStub,
-          elbow,
-          hostStub,
-          hostFace,
-        ]);
+        const elbow = { x: hostFace.x, y: parentStub.y };
+        linkEndpoints.set(id, [parentFace, parentStub, elbow, hostFace]);
       }
     }
     placedIds.add(id);
