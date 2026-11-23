@@ -57,8 +57,36 @@ After activate, `acta` is on `PATH` (or use `python acta.py`). Optional:
 `pre-commit install --install-hooks`. Graphviz `dot` is optional for PNG diagrams
 (`brew install graphviz`). Never commit `.config` or `.env`.
 
-For the **Web UI**, also install **Node.js 20+** (`npm` on `PATH`) so
-`scripts/build-ui.sh` can build the React SPA.
+### Install Node.js (Web UI SPA build)
+
+`uv sync --extra ui` only installs the Python API (FastAPI / uvicorn). Building the
+React app needs **Node.js 20+** with `npm` on `PATH`.
+
+```bash
+# macOS (Homebrew)
+brew install node
+
+# Fedora / RHEL
+sudo dnf install nodejs
+
+# Debian / Ubuntu (Node 20 from NodeSource, or use distro node if ≥20)
+# https://github.com/nodesource/distributions
+sudo apt-get install -y nodejs npm   # only if package is Node 20+
+
+# Or version managers (any OS)
+# fnm: https://github.com/Schniz/fnm
+# nvm: https://github.com/nvm-sh/nvm
+```
+
+Check:
+
+```bash
+node -v   # v20.x or newer
+npm -v
+```
+
+`scripts/build-ui.sh` will try `brew install node` on macOS if `npm` is missing
+and Homebrew is available; otherwise it prints these install hints and exits.
 
 ## Quickstart
 
@@ -91,7 +119,7 @@ Settings / `CLAB_HOST`. No SSH-in-UI.
 
 ### Run it (preferred)
 
-From the repo root, with `uv` and Node/`npm` installed:
+From the repo root (needs `uv` + Node/`npm` — see [Install Node.js](#install-nodejs-web-ui-spa-build)):
 
 ```bash
 bash scripts/serve-ui.sh
