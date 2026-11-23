@@ -436,7 +436,8 @@ function columnFabricBottom(
 
 /** Short peer label for host subtitles (``blz-MSP-mleaf2`` → ``mleaf2``). */
 function shortParentLabel(name: string): string {
-  const m = /-((?:m)?leaf\d+)$/i.exec(name);
+  // Prefer mleaf over leaf so ``…-mleaf1`` does not collapse to ``leaf1``.
+  const m = /-((?:mleaf|leaf)\d+)$/i.exec(name);
   return m ? m[1].toLowerCase() : name;
 }
 

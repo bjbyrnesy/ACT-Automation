@@ -1,0 +1,6 @@
+Tux penguin artwork originally by Larry Ewing (lewing@isc.tamu.edu)
+using The GIMP. Permission to use and/or modify is granted, provided
+that Larry Ewing is acknowledged as the original creator.
+
+SVG used here: Wikimedia Commons File:Tux.svg
+https://commons.wikimedia.org/wiki/File:Tux.svg
