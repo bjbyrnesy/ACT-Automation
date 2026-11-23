@@ -31,36 +31,58 @@ topology.
 
 ## Install
 
-Needs **Python 3.15+**.
+Everything you need lives in this section. Later chapters only point here.
 
-### Install uv
+### Dependency matrix
+
+| Dependency | Version | Required for | Notes |
+| --- | --- | --- | --- |
+| **Python** | **3.15+** | CLI, tests, Web API | Runtime for `acta` |
+| **uv** | current | Install / venv / lockfile | Prefer over pip |
+| **Node.js + npm** | **20+** | Web UI SPA build (`build-ui.sh`, Vite) | Not provided by `uv` |
+| **Graphviz** (`dot`) | any recent | Optional PNG from `acta show` | Not needed for the live CV diagram in the Web UI |
+| **Podman** (or Docker) | recent | `clab deploy` / `ssh` / onboard exec | Default runtime is Podman |
+| **containerlab** | recent | Clab deploy path | On the lab host (`CLAB_HOST` may be remote) |
+| **pre-commit** | via `dev` extra | Optional local hooks | Gitleaks, Black, Ruff |
+
+Python packages (PyYAML, httpx, rich; FastAPI/uvicorn for Web UI) come from
+`uv sync` — you do **not** install those by hand.
+
+Never commit `.config` or `.env`.
+
+### 1. Python 3.15+
+
+```bash
+python3 --version   # must be 3.15 or newer
+```
+
+| Platform | Install |
+| --- | --- |
+| macOS | `brew install python@3.15` (or newer formula) |
+| Fedora | `sudo dnf install python3.15` |
+| Debian/Ubuntu | Use deadsnakes or a 3.15+ distro package |
+| Windows | [python.org](https://www.python.org/downloads/) installer; enable “Add to PATH” |
+
+### 2. uv
 
 ```bash
 # macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# or: brew install uv
-# Windows: winget install astral-sh.uv
-#   or: irm https://astral.sh/uv/install.ps1 | iex
+# macOS alternative
+brew install uv
+
+# Windows
+winget install astral-sh.uv
+# or: irm https://astral.sh/uv/install.ps1 | iex
 ```
 
-### Install dependencies and activate the venv
+Confirm: `uv --version`.
 
-```bash
-cd ACT-Automation
-uv sync --extra dev                 # creates .venv (+ FastAPI for web tests)
-source .venv/bin/activate           # macOS / Linux / WSL
-# .venv\Scripts\activate            # Windows
-```
+### 3. Node.js 20+ (Web UI)
 
-After activate, `acta` is on `PATH` (or use `python acta.py`). Optional:
-`pre-commit install --install-hooks`. Graphviz `dot` is optional for PNG diagrams
-(`brew install graphviz`). Never commit `.config` or `.env`.
-
-### Install Node.js (Web UI SPA build)
-
-`uv sync --extra ui` only installs the Python API (FastAPI / uvicorn). Building the
-React app needs **Node.js 20+** with `npm` on `PATH`.
+`uv sync --extra ui` installs only the **Python** API (FastAPI / uvicorn). Building
+or hot-reloading the React SPA needs **Node.js 20+** with `npm` on `PATH`.
 
 ```bash
 # macOS (Homebrew)
@@ -69,24 +91,92 @@ brew install node
 # Fedora / RHEL
 sudo dnf install nodejs
 
-# Debian / Ubuntu (Node 20 from NodeSource, or use distro node if ≥20)
+# Debian / Ubuntu — use Node 20+ (distro package or NodeSource)
 # https://github.com/nodesource/distributions
-sudo apt-get install -y nodejs npm   # only if package is Node 20+
+sudo apt-get install -y nodejs npm   # only if that package is Node 20+
 
-# Or version managers (any OS)
+# Version managers (any OS)
 # fnm: https://github.com/Schniz/fnm
 # nvm: https://github.com/nvm-sh/nvm
 ```
-
-Check:
 
 ```bash
 node -v   # v20.x or newer
 npm -v
 ```
 
-`scripts/build-ui.sh` will try `brew install node` on macOS if `npm` is missing
-and Homebrew is available; otherwise it prints these install hints and exits.
+`scripts/build-ui.sh` tries `brew install node` on macOS when `npm` is missing and
+Homebrew is present; otherwise it prints the same hints and exits.
+
+### 4. Graphviz (optional PNGs)
+
+Only for Graphviz PNG export from `acta show` / older diagram paths. The Web UI
+topology pane does **not** require `dot`.
+
+```bash
+# macOS
+brew install graphviz
+
+# Fedora
+sudo dnf install graphviz
+
+# Debian / Ubuntu
+sudo apt-get install -y graphviz
+
+# Windows
+winget install graphviz
+# then ensure Graphviz `bin` is on PATH
+```
+
+Confirm: `dot -V`.
+
+### 5. Podman / Docker + containerlab (clab path)
+
+Needed to deploy and exec into containerlab labs. Default CLI runtime is **Podman**.
+
+| Platform | Notes |
+| --- | --- |
+| macOS | Install [Podman](https://podman.io/) (often `brew install podman`) and start a Podman machine. `acta ssh` works via the runtime; raw `ssh admin@172.100…` usually needs extra routing. |
+| Linux | `podman` or `docker` from the distro; install [containerlab](https://containerlab.dev/install/) on the host that runs labs. |
+| Windows | Prefer **WSL2** or a remote Linux lab host (`CLAB_HOST` / Settings). |
+
+Confirm (on the lab host): `podman version` or `docker version`, and `containerlab version`.
+
+### 6. Project venv (Python deps)
+
+From the repo root:
+
+```bash
+cd ACT-Automation
+
+# Day-to-day CLI + tests + Web API stubs in CI
+uv sync --extra dev
+
+# Leaner: CLI + Web API only (enough for acta serve after SPA build)
+# uv sync --extra ui
+
+source .venv/bin/activate           # macOS / Linux / WSL
+# .venv\Scripts\activate            # Windows
+```
+
+After activate, `acta` is on `PATH` (or use `python acta.py` / `uv run acta …`).
+
+Optional hooks (after `uv sync --extra dev`):
+
+```bash
+pre-commit install --install-hooks
+```
+
+### Quick verify
+
+```bash
+python3 --version    # ≥ 3.15
+uv --version
+node -v && npm -v    # ≥ 20, if you use the Web UI
+dot -V               # optional
+podman version       # or docker — if you use clab
+acta --help          # after uv sync + activate
+```
 
 ## Quickstart
 
@@ -117,9 +207,12 @@ live **CV-style topology diagram** (zoom, loupe, host rails). Binds
 **127.0.0.1:8765** only and opens a browser. Clab host may be local or remote via
 Settings / `CLAB_HOST`. No SSH-in-UI.
 
+**Prerequisites:** [Install](#install) — at minimum Python 3.15+, uv, and Node.js 20+
+(`npm`). Graphviz is not required for the live diagram.
+
 ### Run it (preferred)
 
-From the repo root (needs `uv` + Node/`npm` — see [Install Node.js](#install-nodejs-web-ui-spa-build)):
+From the repo root:
 
 ```bash
 bash scripts/serve-ui.sh
@@ -380,17 +473,25 @@ Default logins (mgmt SSH, when reachable): cEOS `admin`/`admin`; multitool often
 
 ## Platform notes
 
+Install commands for every dependency are centralized under [Install](#install).
+Short platform reminders:
+
 ### macOS
 
-- Graphviz: `brew install graphviz`
-- Containerlab labs: Podman machine. `acta.py ssh` works from the Mac via the
-  runtime; raw `ssh admin@172.100…` usually does not without extra routing.
+- Use Homebrew for uv, Node, Graphviz, and Podman where possible.
+- Containerlab labs need a **Podman machine**. `acta ssh` works via the runtime;
+  raw `ssh admin@172.100…` usually does not without extra routing.
 
 ### Windows
 
-1. Python 3.15+ and uv.
-2. Optional Graphviz + PATH to its `bin`.
-3. Prefer WSL2 / a Linux lab host for containerlab.
+- Install Python 3.15+ and uv (see Install). Prefer **WSL2** or a remote Linux
+  lab host for containerlab (`CLAB_HOST` / Settings).
+- If you want Graphviz PNGs, install Graphviz and put its `bin` on `PATH`.
+
+### Linux
+
+- Distro packages for Python 3.15+, Node 20+, Graphviz, Podman/Docker, and
+  [containerlab](https://containerlab.dev/install/) on the lab host.
 
 ---
 
@@ -432,7 +533,8 @@ Decommission and Replace). Prefer bulk decommission by hostname prefix.
 
 ## Sharing
 
-1. Clone; `uv sync --extra dev` (+ optional `pre-commit install`).
+1. Clone; follow [Install](#install) (`uv sync --extra dev`, optional
+   `pre-commit install --install-hooks`; add Node if you use the Web UI).
 2. Use your own ACT / CVaaS credentials when prompted — never share `.config`.
 3. Optional: `act create` with **your** serial prefix (not cached for others).
 

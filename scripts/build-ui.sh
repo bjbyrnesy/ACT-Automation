@@ -25,7 +25,7 @@ ensure_npm() {
   printf '  macOS:   brew install node\n' >&2
   printf '  Fedora:  sudo dnf install nodejs\n' >&2
   printf '  Debian:  sudo apt-get install -y nodejs npm   # if package is Node 20+\n' >&2
-  printf '  Or use fnm/nvm — see README “Install Node.js (Web UI SPA build)”\n' >&2
+  printf '  Or use fnm/nvm — see README → Install → Node.js 20+\n' >&2
   exit 1
 }
 
