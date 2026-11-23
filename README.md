@@ -301,7 +301,9 @@ bash scripts/build-ui.sh
 ```
 
 This runs `npm ci` + `npm run build` in `ui/`, then copies `ui/dist/` into
-`acta/web/static/` for `acta serve`. A successful run ends with:
+`acta/web/static/` for `acta serve`. Those files are **generated** (gitignored);
+never commit hashed `index-*.js` / CSS under `static/assets/`. A successful run
+ends with:
 
 ```text
 ✓ built in …ms
