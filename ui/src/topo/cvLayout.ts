@@ -1543,10 +1543,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
         y: hostPos.y - PORT_H,
       };
       const leafPos = parentPos;
+      // Attach on the *outer* bottom of each leaf so verticals clear the
+      // centered mleaf column instead of dropping through it.
       const parentAnchor = {
         x: isLeft
-          ? leafPos.x + NODE_W - PORT_W - 4
-          : leafPos.x + 4,
+          ? leafPos.x + 4
+          : leafPos.x + NODE_W - PORT_W - 4,
         y: leafPos.y + NODE_H,
       };
 
@@ -1570,13 +1572,12 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       const parentFace = outerAttach(parentAnchor, "bottom");
       const parentStub = stubFrom(parentFace, "bottom");
       const hostFace = outerAttach(hostAnchor, "top");
-      // Drop past any mleaf stack, meet on the centerline (Po), then into the
-      // host — legs stay side-local and do not cross.
       const pairCx =
         ((positions.get(leftLeaf)?.x ?? 0) +
           (positions.get(rightLeaf)?.x ?? 0) +
           NODE_W) /
         2;
+      // Gap under the mleaf stack (pairColumnBottom includes mleafs).
       const clearY = Math.min(
         hostFace.y - 8,
         Math.max(
@@ -1584,14 +1585,21 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
           pairColumnBottom(leftLeaf, rightLeaf, positions, byName) + 10,
         ),
       );
-      const path = [
-        parentFace,
-        parentStub,
-        { x: parentStub.x, y: clearY },
+      // Keep the drop outside the centered mleaf footprint.
+      const mleafHalf = NODE_W / 2 + 10;
+      const bypassX = isLeft
+        ? Math.min(parentStub.x, pairCx - mleafHalf)
+        : Math.max(parentStub.x, pairCx + mleafHalf);
+      const path: LaidPoint[] = [parentFace, parentStub];
+      if (Math.abs(bypassX - parentStub.x) >= 2) {
+        path.push({ x: bypassX, y: parentStub.y });
+      }
+      path.push(
+        { x: bypassX, y: clearY },
         { x: isLeft ? pairCx - 6 : pairCx + 6, y: clearY },
         { x: hostFace.x, y: clearY },
         hostFace,
-      ];
+      );
       linkEndpoints.set(id, path);
       let po = dualHomePo.find((p) => p.host === hostNode.name);
       if (!po) {
