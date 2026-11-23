@@ -26,6 +26,10 @@ assert(peerGap === 80, `expected PEER_GAP 80, got ${peerGap}`);
 
 const mleaf = lay.nodes.find((n) => n.name.includes("B-mleaf1"));
 assert(mleaf, "missing B-mleaf1");
+assert(
+  mleaf.w < leaf1.w,
+  `mleaf should be narrower than leaf (${mleaf.w} vs ${leaf1.w})`,
+);
 const pairMid = (leaf1.x + leaf2.x + leaf2.w) / 2;
 const mMid = mleaf.x + mleaf.w / 2;
 assert(Math.abs(pairMid - mMid) < 0.5, `mleaf not centered (${pairMid} vs ${mMid})`);
@@ -37,7 +41,7 @@ assert(
 const host = lay.nodes.find((n) => n.name === "bar");
 assert(host, "missing host bar");
 // bar → B-mleaf1:et9 (odd) → left rail of the leaf-pair footprint.
-assert(host.w < mleaf.w, `expected narrow host width, got ${host.w}`);
+assert(host.w === 88, `expected host width 88, got ${host.w}`);
 assert(
   Math.abs(host.x - leaf1.x) < 0.5,
   `mleaf host should sit on left rail (odd et), got x=${host.x} pairLeft=${leaf1.x}`,
@@ -81,6 +85,10 @@ assert(
 // Dual-home legs must not cut through the mleaf box (segment sample).
 const aMleaf = lay.nodes.find((n) => n.name.includes("A-mleaf1"));
 assert(aMleaf, "missing A-mleaf1");
+assert(
+  aMleaf.w < aLeaf1.w,
+  `A-mleaf should be narrower than leaf (${aMleaf.w} vs ${aLeaf1.w})`,
+);
 const fooLinks = lay.links.filter(
   (l) => l.aName === "foo" || l.bName === "foo",
 );
@@ -102,6 +110,21 @@ for (const link of fooLinks) {
         `foo link segment crosses A-mleaf1 at (${x.toFixed(1)},${y.toFixed(1)})`,
       );
     }
+  }
+}
+
+// First dual-home must not sit on the far outer bottom corners of the leaves.
+for (const leaf of [aLeaf1, aLeaf2]) {
+  const hostPorts = leaf.ports.filter((p) => p.side === "bottom" && p.kind === "host");
+  assert(hostPorts.length >= 1, `${leaf.name} missing dual-home bottom port`);
+  for (const port of hostPorts) {
+    const onFarOuter =
+      Math.abs(port.x - leaf.x) <= 6 ||
+      Math.abs(port.x + 22 - (leaf.x + leaf.w)) <= 6;
+    assert(
+      !onFarOuter,
+      `${leaf.name} dual-home port still on far outer edge (x=${port.x}, leaf=${leaf.x}..${leaf.x + leaf.w})`,
+    );
   }
 }
 
