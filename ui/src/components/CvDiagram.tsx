@@ -15,6 +15,11 @@ const ZOOM_STEP = 1.25;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 4;
 
+/** Circular magnifier: inspect labels without changing diagram zoom. */
+const LOUPE_SIZE = 168;
+const LOUPE_RADIUS = LOUPE_SIZE / 2;
+const LOUPE_FACTOR = 2.75;
+
 /** Reserved left strip for Tux so hostname text never draws under the logo. */
 const HOST_ICON_SLOT = 22;
 const HOST_ICON_PAD = 3;
@@ -56,8 +61,19 @@ export function CvDiagram({
   }, [yamlText]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [fitZoom, setFitZoom] = useState(1);
+  const [loupeOn, setLoupeOn] = useState(false);
+  const [loupePos, setLoupePos] = useState<{
+    /** Loupe center relative to the frame (CSS px). */
+    vx: number;
+    vy: number;
+    /** Pointer relative to the stage (CSS px) — what to center under the glass. */
+    sx: number;
+    sy: number;
+  } | null>(null);
   const [drag, setDrag] = useState<{
     x: number;
     y: number;
@@ -88,6 +104,8 @@ export function CvDiagram({
   useEffect(() => {
     setZoom(1);
     setFitZoom(1);
+    setLoupeOn(false);
+    setLoupePos(null);
   }, [yamlText]);
 
   useEffect(() => {
@@ -107,8 +125,35 @@ export function CvDiagram({
     return () => ro.disconnect();
   }, [layout, computeFit, fitZoom]);
 
+  useEffect(() => {
+    if (!loupeOn) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setLoupeOn(false);
+        setLoupePos(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [loupeOn]);
+
   function clampZoom(value: number) {
     return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+  }
+
+  function updateLoupe(clientX: number, clientY: number) {
+    if (!loupeOn) return;
+    const frame = frameRef.current;
+    const stage = stageRef.current;
+    if (!frame || !stage) return;
+    const frameRect = frame.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    setLoupePos({
+      vx: clientX - frameRect.left,
+      vy: clientY - frameRect.top,
+      sx: clientX - stageRect.left,
+      sy: clientY - stageRect.top,
+    });
   }
 
   function onWheel(event: React.WheelEvent) {
@@ -124,6 +169,7 @@ export function CvDiagram({
     const vp = viewportRef.current;
     if (!vp) return;
     vp.setPointerCapture(event.pointerId);
+    updateLoupe(event.clientX, event.clientY);
     setDrag({
       x: event.clientX,
       y: event.clientY,
@@ -133,11 +179,15 @@ export function CvDiagram({
   }
 
   function onPointerMove(event: React.PointerEvent) {
-    if (!drag) return;
-    const vp = viewportRef.current;
-    if (!vp) return;
-    vp.scrollLeft = drag.left - (event.clientX - drag.x);
-    vp.scrollTop = drag.top - (event.clientY - drag.y);
+    if (drag) {
+      const vp = viewportRef.current;
+      if (vp) {
+        vp.scrollLeft = drag.left - (event.clientX - drag.x);
+        vp.scrollTop = drag.top - (event.clientY - drag.y);
+      }
+    }
+    // After any pan scroll so stageRect matches what's under the pointer.
+    updateLoupe(event.clientX, event.clientY);
   }
 
   function onPointerUp(event: React.PointerEvent) {
@@ -148,7 +198,21 @@ export function CvDiagram({
     setDrag(null);
   }
 
+  function onPointerLeave() {
+    setLoupePos(null);
+  }
+
+  function toggleLoupe() {
+    setLoupeOn((on) => {
+      if (on) setLoupePos(null);
+      return !on;
+    });
+  }
+
   const pct = Math.round(zoom * 100);
+  const hint = loupeOn
+    ? "Loupe on · move to inspect · Esc to exit"
+    : "⌘/Ctrl+wheel zoom · drag to pan";
 
   return (
     <div className="cv-diagram">
@@ -181,44 +245,92 @@ export function CvDiagram({
         >
           100%
         </button>
-        <span className="cv-diagram__hint">⌘/Ctrl+wheel zoom · drag to pan</span>
+        <button
+          type="button"
+          disabled={!layout}
+          aria-pressed={loupeOn}
+          className={loupeOn ? "is-active" : undefined}
+          onClick={toggleLoupe}
+          title="Magnifier — inspect hostnames without zooming the whole diagram"
+        >
+          Loupe
+        </button>
+        <span className="cv-diagram__hint">{hint}</span>
       </div>
-      <div
-        ref={viewportRef}
-        className={`cv-diagram__viewport${drag ? " is-dragging" : ""}`}
-        onWheel={onWheel}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-      >
-        {layout ? (
+      <div ref={frameRef} className="cv-diagram__frame">
+        <div
+          ref={viewportRef}
+          className={`cv-diagram__viewport${drag ? " is-dragging" : ""}${
+            loupeOn ? " is-loupe" : ""
+          }`}
+          onWheel={onWheel}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onPointerLeave={onPointerLeave}
+        >
+          {layout ? (
+            <div
+              ref={stageRef}
+              className="cv-diagram__stage"
+              style={{
+                width: layout.width * zoom,
+                height: layout.height * zoom,
+              }}
+            >
+              <SvgCanvas layout={layout} zoom={zoom} />
+            </div>
+          ) : (
+            <span className="cv-diagram__empty">{emptyLabel}</span>
+          )}
+        </div>
+        {layout && loupeOn && loupePos ? (
           <div
-            className="cv-diagram__stage"
+            className="cv-diagram__loupe"
             style={{
-              width: layout.width * zoom,
-              height: layout.height * zoom,
+              left: loupePos.vx - LOUPE_RADIUS,
+              top: loupePos.vy - LOUPE_RADIUS,
             }}
+            aria-hidden="true"
           >
-            <SvgCanvas layout={layout} zoom={zoom} />
+            <div
+              className="cv-diagram__loupe-inner"
+              style={{
+                width: layout.width * zoom,
+                height: layout.height * zoom,
+                transform: `translate(${LOUPE_RADIUS - loupePos.sx * LOUPE_FACTOR}px, ${LOUPE_RADIUS - loupePos.sy * LOUPE_FACTOR}px) scale(${LOUPE_FACTOR})`,
+              }}
+            >
+              <SvgCanvas layout={layout} zoom={zoom} idPrefix="loupe-" decorative />
+            </div>
           </div>
-        ) : (
-          <span className="cv-diagram__empty">{emptyLabel}</span>
-        )}
+        ) : null}
       </div>
     </div>
   );
 }
 
-function SvgCanvas({ layout, zoom }: { layout: CvLayout; zoom: number }) {
+function SvgCanvas({
+  layout,
+  zoom,
+  idPrefix = "",
+  decorative = false,
+}: {
+  layout: CvLayout;
+  zoom: number;
+  idPrefix?: string;
+  decorative?: boolean;
+}) {
   return (
     <svg
       className="cv-diagram__svg"
       width={layout.width * zoom}
       height={layout.height * zoom}
       viewBox={`0 0 ${layout.width} ${layout.height}`}
-      role="img"
-      aria-label={layout.title}
+      role={decorative ? "presentation" : "img"}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : layout.title}
     >
       <rect
         x={0}
@@ -295,7 +407,7 @@ function SvgCanvas({ layout, zoom }: { layout: CvLayout; zoom: number }) {
         const titleX = isHost ? textLeft : node.x + node.w / 2;
         const titleY = node.y + (node.subtitle ? node.h / 2 - 4 : node.h / 2 + 4);
         const clipId = isHost
-          ? `host-text-${node.name.replace(/[^A-Za-z0-9_-]/g, "_")}`
+          ? `${idPrefix}host-text-${node.name.replace(/[^A-Za-z0-9_-]/g, "_")}`
           : null;
         return (
           <g key={node.name}>

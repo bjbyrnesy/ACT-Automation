@@ -75,8 +75,8 @@ export type CvLayout = {
 
 const NODE_W = 118;
 const NODE_H = 52;
-/** Narrower than fabric switches so several hosts fit beside mleaf stacks. */
-const HOST_W = 72;
+/** Narrower than fabric switches; wide enough for ``mleaf1:et10`` + Tux slot. */
+const HOST_W = 88;
 const PORT_W = 22;
 const PORT_H = 14;
 /** Default horizontal gap between non-peer devices. */
@@ -439,6 +439,19 @@ function shortParentLabel(name: string): string {
   // Prefer mleaf over leaf so ``…-mleaf1`` does not collapse to ``leaf1``.
   const m = /-((?:mleaf|leaf)\d+)$/i.exec(name);
   return m ? m[1].toLowerCase() : name;
+}
+
+/** Host subtitle via-parent, e.g. ``mleaf1:et7`` (switch-side Ethernet). */
+function hostViaLabel(
+  hostName: string,
+  links: GraphLink[],
+  byName: Record<string, TopologyNode>,
+): string | null {
+  const parent = hostParentName(hostName, links, byName);
+  if (!parent) return null;
+  const label = shortParentLabel(parent);
+  const port = hostParentPort(hostName, parent, links);
+  return port != null ? `${label}:et${port}` : label;
 }
 
 /** Bounding box of the leaf pair (or single leaf) that feeds an mleaf column. */
@@ -1495,8 +1508,7 @@ export function layoutCvDiagram(graph: TopologyGraph): CvLayout {
       subtitle:
         node.role === "host"
           ? (() => {
-              const parent = hostParentName(node.name, graph.links, byName);
-              const via = parent ? shortParentLabel(parent) : null;
+              const via = hostViaLabel(node.name, graph.links, byName);
               if (shortIp && via) return `${shortIp} · ${via}`;
               return via ?? shortIp ?? "host";
             })()

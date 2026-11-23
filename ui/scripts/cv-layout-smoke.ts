@@ -42,6 +42,10 @@ assert(
   `host not centered under mleaf (${hostMid} vs ${mMid})`,
 );
 assert(host.w < mleaf.w, `expected narrow host width, got ${host.w}`);
+assert(
+  host.subtitle != null && /:et\d+$/.test(host.subtitle),
+  `expected host subtitle with switchport (mleafN:etN), got ${host.subtitle}`,
+);
 
 const mlag = lay.domains.filter((d) => d.kind === "mlag");
 assert(mlag.length >= 1, "expected MLAG domains");
