@@ -15,11 +15,13 @@ _EXACT_KEYS = frozenset(
         "CLAB_HOST",
         "CLAB_IMAGE",
         "CLAB_NAME",
+        "CLAB_RUNTIME",
         "preview_auto",
         "preview_debounce_ms",
     }
 )
 _PREFIXES = ("ACT_", "CVAAS_", "GENERIC_")
+_VALID_RUNTIMES = frozenset({"docker", "podman"})
 _DEFAULT_DEBOUNCE_MS = 400
 
 
@@ -64,12 +66,14 @@ def get_settings(labs_root: Path) -> dict[str, Any]:
         "CLAB_HOST": raw.get("CLAB_HOST", ""),
         "CLAB_IMAGE": raw.get("CLAB_IMAGE", ""),
         "CLAB_NAME": raw.get("CLAB_NAME", ""),
+        "CLAB_RUNTIME": raw.get("CLAB_RUNTIME", ""),
         "preview_auto": _preview_auto(raw),
         "preview_debounce_ms": _preview_debounce_ms(raw),
     }
+    _clab_exact = {"CLAB_HOST", "CLAB_IMAGE", "CLAB_NAME", "CLAB_RUNTIME"}
     for key, value in raw.items():
-        if key.startswith(_PREFIXES) or key in {"CLAB_HOST", "CLAB_IMAGE", "CLAB_NAME"}:
-            if key in {"CLAB_HOST", "CLAB_IMAGE", "CLAB_NAME"}:
+        if key.startswith(_PREFIXES) or key in _clab_exact:
+            if key in _clab_exact:
                 continue
             if not _is_allowed(key):
                 continue
@@ -121,6 +125,16 @@ def patch_settings(labs_root: Path, updates: dict[str, Any]) -> dict[str, Any]:
             continue
         if key == "CLAB_HOST":
             data[key] = text.strip()
+            continue
+        if key == "CLAB_RUNTIME":
+            runtime = text.strip().lower()
+            if runtime and runtime not in _VALID_RUNTIMES:
+                raise WebError(
+                    400,
+                    "CLAB_RUNTIME must be docker or podman",
+                    fields={"CLAB_RUNTIME": "invalid"},
+                )
+            data[key] = runtime
             continue
         data[key] = text
 

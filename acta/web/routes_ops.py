@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
@@ -12,10 +12,12 @@ from pydantic import BaseModel, ConfigDict
 from acta.web import ops
 from acta.web.errors import WebError
 from acta.web.jobs import Job, submit_job
+from acta.web.settings_api import get_settings
 
 router = APIRouter()
 
 _SYNC_ERRORS = (ValueError, FileExistsError, FileNotFoundError, OSError, TypeError)
+_RUNTIMES = frozenset({"docker", "podman"})
 
 
 class _Body(BaseModel):
@@ -29,7 +31,7 @@ class _Body(BaseModel):
 
 class ClabBody(_Body):
     host: str | None = None
-    runtime: str | None = None
+    runtime: Literal["docker", "podman"] | None = None
     from_act: bool | None = None
     name: str | None = None
     image: str | None = None
@@ -92,6 +94,21 @@ def _resolve(request: Request, raw: str | None) -> Path:
     return ops.require_written_path(candidate)
 
 
+def _clab_opts(request: Request, body: ClabBody) -> dict[str, Any]:
+    """Job options with Web UI settings filling host/runtime when omitted."""
+    opts = body.options()
+    settings = get_settings(Path(request.app.state.labs_root))
+    if opts.get("host") is None:
+        host = str(settings.get("CLAB_HOST") or "").strip()
+        if host:
+            opts["host"] = host
+    if opts.get("runtime") is None:
+        runtime = str(settings.get("CLAB_RUNTIME") or "").strip().lower()
+        if runtime in _RUNTIMES:
+            opts["runtime"] = runtime
+    return opts
+
+
 def _job_view(job: Job) -> dict[str, Any]:
     return {"id": job.id, "kind": job.kind, "status": job.status}
 
@@ -115,31 +132,31 @@ def _sync(fn: Callable[[], Path]) -> dict[str, str]:
 
 @router.post("/api/jobs/clab/generate")
 def clab_generate(body: ClabBody, request: Request) -> dict[str, Any]:
-    path, opts = _resolve(request, body.path), body.options()
+    path, opts = _resolve(request, body.path), _clab_opts(request, body)
     return _submit("clab.generate", lambda: ops.op_clab_generate(path, **opts))
 
 
 @router.post("/api/jobs/clab/deploy")
 def clab_deploy(body: ClabBody, request: Request) -> dict[str, Any]:
-    path, opts = _resolve(request, body.path), body.options()
+    path, opts = _resolve(request, body.path), _clab_opts(request, body)
     return _submit("clab.deploy", lambda: ops.op_clab_deploy(path, **opts))
 
 
 @router.post("/api/jobs/clab/destroy")
 def clab_destroy(body: ClabBody, request: Request) -> dict[str, Any]:
-    path, opts = _resolve(request, body.path), body.options()
+    path, opts = _resolve(request, body.path), _clab_opts(request, body)
     return _submit("clab.destroy", lambda: ops.op_clab_destroy(path, **opts))
 
 
 @router.post("/api/jobs/clab/redeploy")
 def clab_redeploy(body: ClabBody, request: Request) -> dict[str, Any]:
-    path, opts = _resolve(request, body.path), body.options()
+    path, opts = _resolve(request, body.path), _clab_opts(request, body)
     return _submit("clab.redeploy", lambda: ops.op_clab_redeploy(path, **opts))
 
 
 @router.post("/api/jobs/clab/onboard")
 def clab_onboard(body: ClabBody, request: Request) -> dict[str, Any]:
-    path, opts = _resolve(request, body.path), body.options()
+    path, opts = _resolve(request, body.path), _clab_opts(request, body)
     return _submit("clab.onboard", lambda: ops.op_clab_onboard(path, **opts))
 
 

@@ -226,11 +226,41 @@ def test_route_deploy_job_mocked(
     )
     response = client.post(
         "/api/jobs/clab/deploy",
-        json={"path": act_file.name, "host": "lab1", "from_act": True},
+        json={
+            "path": act_file.name,
+            "host": "lab1",
+            "runtime": "docker",
+            "from_act": True,
+        },
     )
     assert response.status_code == 200
     assert _wait(response.json()["id"]).status == "succeeded"
-    assert seen == {"path": act_file, "host": "lab1", "from_act": True}
+    assert seen == {
+        "path": act_file,
+        "host": "lab1",
+        "runtime": "docker",
+        "from_act": True,
+    }
+
+
+def test_route_deploy_uses_settings_runtime(
+    client: TestClient, act_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from acta.config import save_config
+
+    save_config(tmp_path / ".config", {"CLAB_RUNTIME": "docker"})
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ops, "op_clab_deploy", lambda path, **kw: seen.update(path=path, **kw)
+    )
+    response = client.post(
+        "/api/jobs/clab/deploy",
+        json={"path": act_file.name, "from_act": True},
+    )
+    assert response.status_code == 200
+    assert _wait(response.json()["id"]).status == "succeeded"
+    assert seen["runtime"] == "docker"
+    assert seen["from_act"] is True
 
 
 def test_route_job_failure_recorded(

@@ -61,11 +61,14 @@ def _clab_args(topology: Path, **kwargs: Any) -> Any:
     )
 
     config = read_config()
+    runtime = (config.get("CLAB_RUNTIME") or "").strip().lower()
+    if runtime not in {"docker", "podman"}:
+        runtime = None
     values: dict[str, Any] = {
         "topology": str(topology),
         "source": str(topology),
         "host": config.get("CLAB_HOST") or None,
-        "runtime": None,
+        "runtime": runtime,
         "from_act": config_flag(config.get("CLAB_FROM_ACT"), default=False),
         "name": config.get("CLAB_NAME") or None,
         "image": config_image(config),

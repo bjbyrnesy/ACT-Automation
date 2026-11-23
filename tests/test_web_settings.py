@@ -50,6 +50,23 @@ def test_patch_host_and_empty_means_local(tmp_path: Path) -> None:
     assert load_config(tmp_path / ".config")["CLAB_HOST"] == ""
 
 
+def test_patch_runtime_docker_or_empty(tmp_path: Path) -> None:
+    patched = patch_settings(tmp_path, {"CLAB_RUNTIME": "docker"})
+    assert patched["CLAB_RUNTIME"] == "docker"
+    assert load_config(tmp_path / ".config")["CLAB_RUNTIME"] == "docker"
+
+    cleared = patch_settings(tmp_path, {"CLAB_RUNTIME": ""})
+    assert cleared["CLAB_RUNTIME"] == ""
+    assert load_config(tmp_path / ".config")["CLAB_RUNTIME"] == ""
+
+
+def test_patch_runtime_rejects_unknown(tmp_path: Path) -> None:
+    client = TestClient(create_app(labs_root=tmp_path))
+    response = client.patch("/api/settings", json={"CLAB_RUNTIME": "containerd"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "CLAB_RUNTIME must be docker or podman"
+
+
 def test_patch_rejects_keys_outside_allowlist(tmp_path: Path) -> None:
     client = TestClient(create_app(labs_root=tmp_path))
     response = client.patch("/api/settings", json={"NOT_A_KEY": "x", "MAX_SPINES": "2"})
