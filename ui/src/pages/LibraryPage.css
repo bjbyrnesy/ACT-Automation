@@ -1,0 +1,30 @@
+.library-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.library-page__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.library-page__new {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.library-page__new:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-text);
+}

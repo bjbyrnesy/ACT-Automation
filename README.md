@@ -8,6 +8,7 @@ and onboard switches to **CVaaS**.
 acta.py act  {create,extend,upload,onboard}              # ACT / vEOS
 acta.py clab {create,generate,deploy,destroy,redeploy,onboard,show}
 acta.py show | attach | ssh                              # day-2 (both platforms)
+acta.py serve | ui                                       # local Web UI (127.0.0.1)
 ```
 
 Examples assume an activated venv (see [Install](#install)). Use `acta …` or
@@ -47,7 +48,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 cd ACT-Automation
-uv sync --extra dev                 # creates .venv and installs deps + acta
+uv sync --extra dev                 # creates .venv (+ FastAPI for web tests)
 source .venv/bin/activate           # macOS / Linux / WSL
 # .venv\Scripts\activate            # Windows
 ```
@@ -78,12 +79,52 @@ acta ssh A-leaf1 -- show hostname
 acta clab redeploy mylab.clab.yml        # after attach/extend
 ```
 
+### Web UI (local)
+
+Localhost ops console (Create → Graphviz preview → Write, Labs/Show, Extend,
+Attach, Clab/ACT jobs, Settings). Binds **127.0.0.1:8765** and opens a browser.
+Clab host may be local or remote via Settings / `CLAB_HOST`. No SSH-in-UI.
+Graphviz `dot` required for PNG preview.
+
+```bash
+# One-shot (preferred — keeps sync + build + serve on one argv):
+bash scripts/serve-ui.sh
+# optional flags pass through: bash scripts/serve-ui.sh --no-open --root /path/to/labs
+```
+
+Or step by step (keep `uv run …` on **one** line — a break after `uv` runs bare `uv` help):
+
+```bash
+uv sync --extra ui
+bash scripts/build-ui.sh
+uv run acta serve            # or: .venv/bin/acta serve
+```
+
+You should see:
+
+```text
+ACTA Web UI listening on http://127.0.0.1:8765/
+Labs root: …
+Press Ctrl-C to stop.
+INFO:     Uvicorn running on http://127.0.0.1:8765 …
+```
+
+Dev (Vite hot reload, API still via `acta serve`):
+
+```bash
+# Terminal 1
+bash scripts/serve-ui.sh --no-open
+# Terminal 2
+cd ui && npm ci && npm run dev   # proxies /api → :8765
+```
+
 ---
 
 ## CLI map
 
 | Command | Purpose |
 | --- | --- |
+| `serve` / `ui` | Local Web UI on 127.0.0.1 (opens browser) |
 | `act create` | Interactive fabric + capacity header; `--for act\|clab\|both` |
 | `act extend` | Add leaf / mleaf / site / … on unused ports only |
 | `act upload` | Push YAML to ACT; optional lab create/deploy |

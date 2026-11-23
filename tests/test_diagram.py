@@ -67,6 +67,50 @@ def test_single_dc_dot_uses_ranks_and_mlag_style():
     assert "spine1 -> leaf1" in dot
 
 
+def test_odd_leaf_count_keeps_sequential_mlag_and_rank_order():
+    """5 leaves → pairs (1,2)+(3,4), leftover 5; DOT pins L→R index order."""
+    text = emit_act_yaml(
+        FabricSpec(
+            hostname_prefix="demo",
+            serial_prefix="demo",
+            eos_version="4.35.4M",
+            capacity=Capacity(
+                fabric_mode="l3ls",
+                max_spines=4,
+                max_leaves=8,
+                max_mleafs_per_pair=0,
+                spines=2,
+                leaves=5,
+            ),
+            mlag_pairs=True,
+            spine_mlag=False,
+            member_leaf_pairs=[],
+            member_leaves_per_pair=0,
+            dc_count=1,
+        )
+    )
+    peer_block: list[str] = []
+    capture = False
+    for line in text.splitlines():
+        if "MLAG peer links" in line:
+            capture = True
+            continue
+        if capture:
+            if line.startswith("#") and "MLAG peer" not in line and line.strip():
+                break
+            if "leaf" in line:
+                peer_block.append(line)
+    peer_text = "\n".join(peer_block)
+    assert "demo-leaf1" in peer_text and "demo-leaf2" in peer_text
+    assert "demo-leaf3" in peer_text and "demo-leaf4" in peer_text
+    assert "demo-leaf5" not in peer_text
+
+    dot = topology_to_dot(text)
+    assert "leaf1 -> leaf2 -> leaf3 -> leaf4 -> leaf5 [style=invis, weight=100]" in dot
+    assert "leaf1 -> leaf2" in dot
+    assert "leaf3 -> leaf4" in dot
+
+
 def test_multi_dc_dot_uses_site_clusters_and_backbone():
     dot = topology_to_dot(_multi("l3ls"))
     assert "subgraph cluster_A" in dot

@@ -301,6 +301,18 @@ def _ordered_pair(left: _Node, right: _Node) -> tuple[_Node, _Node]:
     return right, left
 
 
+def _pin_same_rank_order(lines: list[str], group: list[_Node], *, indent: str) -> None:
+    """Keep same-rank nodes left-to-right by index (MLAG pairs stay adjacent).
+
+    Spine↔leaf mesh edges otherwise let Graphviz reshuffle leaves so an odd
+    leftover can sit between pairs and peer-links look crossed/wrong.
+    """
+    if len(group) < 2:
+        return
+    chain = " -> ".join(node.dot_id for node in group)
+    lines.append(f"{indent}{chain} [style=invis, weight=100];")
+
+
 def _sorted_hosts(hosts: list[_Node]) -> list[_Node]:
     return sorted(hosts, key=lambda item: (item.index, item.name))
 
@@ -388,6 +400,7 @@ def _dot_single(
         for node in group:
             lines.append(_node_decl(node, multi=False, indent="    "))
         lines.append("  }")
+        _pin_same_rank_order(lines, group, indent="  ")
     hosts = [node for node in nodes if node.role == "host"]
     if hosts:
         lines.append("")
@@ -460,6 +473,7 @@ def _dot_multi(
             for node in group:
                 lines.append(_node_decl(node, multi=True, indent="      "))
             lines.append("    }")
+            _pin_same_rank_order(lines, group, indent="    ")
         site_hosts = [node for node in site_nodes if node.role == "host"]
         if site_hosts:
             lines.append("")

@@ -307,6 +307,34 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Ethernet port on the switch (MLAG peers or --mleaf target)",
     )
+
+    serve = sub.add_parser(
+        "serve",
+        aliases=("ui",),
+        help="Launch the local Web UI (127.0.0.1) and open a browser",
+    )
+    serve.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (loopback only; default: 127.0.0.1)",
+    )
+    serve.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP port (default: 8765)",
+    )
+    serve.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Labs directory for topologies (default: cwd)",
+    )
+    serve.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not open the default browser",
+    )
     return parser
 
 
@@ -657,6 +685,16 @@ def main(argv: list[str] | None = None) -> int:
                 mleaf=args.mleaf,
                 et=args.et,
                 project_dir=Path.cwd(),
+            )
+            return 0
+        if args.command in {"serve", "ui"}:
+            from acta.web.serve import run_serve
+
+            run_serve(
+                host=args.host,
+                port=args.port,
+                labs_root=args.root or Path.cwd(),
+                open_browser=not args.no_open,
             )
             return 0
         if args.command == "act":
