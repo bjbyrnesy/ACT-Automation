@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from acta.clab import host_net as hn
@@ -148,3 +150,93 @@ def test_claimed_ips_strips_cidr_and_ignores_disabled_or_malformed():
     }
     assert hn.claimed_ips_from_clab(lab) == {"192.168.2.5"}
     assert hn.claimed_ips_from_clab({"topology": {"nodes": []}}) == set()
+
+
+def _single() -> hn.HostNetPlan:
+    return hn.HostNetPlan(
+        ip="192.168.2.10",
+        subnet="192.168.2.0/24",
+        gateway="192.168.2.1",
+        iface="eth1",
+        dual_homed=False,
+    )
+
+
+def _dual() -> hn.HostNetPlan:
+    return hn.HostNetPlan(
+        ip="192.168.2.11",
+        subnet="192.168.2.0/24",
+        gateway="192.168.2.1",
+        iface="bond0",
+        dual_homed=True,
+    )
+
+
+def test_render_bootstrap_single_uses_eth1():
+    script = hn.render_bootstrap(_single())
+    assert script.startswith("#!/bin/sh")
+    assert "set -eu" in script
+    assert "eth1" in script
+    assert "192.168.2.10/24" in script
+    assert "ip route replace default via 192.168.2.1 dev eth1" in script
+    assert "bond0" not in script
+
+
+def test_render_bootstrap_dual_creates_lacp_bond():
+    script = hn.render_bootstrap(_dual())
+    assert "mode 802.3ad" in script or "mode=802.3ad" in script
+    assert "eth1" in script and "eth2" in script
+    assert "bond0" in script
+    assert "192.168.2.11/24" in script
+    assert "ip route replace default via 192.168.2.1 dev bond0" in script
+
+
+def test_render_md_mentions_mcast_and_cloudvision():
+    md = hn.render_host_net_md(_single(), host="host1")
+    assert "mcast-send" in md
+    assert "CloudVision" in md
+    assert "192.168.2.10" in md
+
+
+def test_render_md_lists_tools_and_dual_lacp():
+    md = hn.render_host_net_md(_dual(), host="host2")
+    for tool in (
+        "ping",
+        "traceroute",
+        "curl",
+        "dig",
+        "lldpcli",
+        "mcast-send",
+        "mcast-receive",
+        "mcast-status",
+    ):
+        assert tool in md
+    assert "LACP" in md
+    assert "bond0" in md
+
+
+def test_render_env_and_labels():
+    plan = _single()
+    env = hn.render_host_net_env(plan)
+    assert "HOST_NET_IP=192.168.2.10" in env
+    assert "HOST_NET_IFACE=eth1" in env
+    assert hn.host_net_labels(plan) == {
+        hn.LABEL_ENABLED: "true",
+        hn.LABEL_IP: "192.168.2.10",
+        hn.LABEL_SUBNET: "192.168.2.0/24",
+        hn.LABEL_GATEWAY: "192.168.2.1",
+        hn.LABEL_IFACE: "eth1",
+    }
+
+
+def test_write_host_net_files(tmp_path: Path):
+    boot, md, env = hn.write_host_net_files(tmp_path, "host1", _single())
+    assert boot.parent == tmp_path / "host1"
+    assert (boot.name, md.name, env.name) == (
+        "bootstrap.sh",
+        "HOST-NET.md",
+        "HOST-NET.env",
+    )
+    assert boot.stat().st_mode & 0o111
+    assert "192.168.2.10" in md.read_text()
+    assert "HOST_NET_IP" in env.read_text()
