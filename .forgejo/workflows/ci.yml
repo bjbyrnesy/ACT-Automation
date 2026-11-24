@@ -25,7 +25,13 @@ jobs:
           set -euo pipefail
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
-            git curl ca-certificates graphviz build-essential
+            git curl ca-certificates graphviz build-essential \
+            bash openssh-client sudo
+          # Match GitHub-hosted runners: non-root so DEPLOY_SCRIPT takes the
+          # sudo path (root skips sudo and breaks umask/invocation tests).
+          id -u ci >/dev/null 2>&1 || useradd --create-home --uid 1000 ci
+          echo 'ci ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/ci
+
           curl -LsSf https://astral.sh/uv/0.9.30/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           # Binary on PATH for pre-commit gitleaks-system (avoids golang hook).
@@ -74,5 +80,10 @@ jobs:
       - name: Pytest
         run: |
           set -euo pipefail
-          export PATH="$HOME/.local/bin:$PATH"
-          uv run --extra dev --extra ui pytest -q --tb=short
+          export PATH="/root/.local/bin:/usr/local/bin:$PATH"
+          chown -R ci:ci .
+          # Run as ci so host_run deploy scripts exercise sudo (not root bypass).
+          runuser -u ci -- env \
+            HOME=/home/ci \
+            PATH="/root/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+            uv run --extra dev --extra ui pytest -q --tb=short
