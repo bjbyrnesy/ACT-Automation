@@ -5,6 +5,7 @@ import { AttachPage } from "./pages/AttachPage";
 import { CreatePage } from "./pages/CreatePage";
 import { DeployPage } from "./pages/DeployPage";
 import { ExtendPage } from "./pages/ExtendPage";
+import { ImagesPage } from "./pages/ImagesPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -15,6 +16,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route index element={<LibraryPage />} />
         <Route path="new" element={<CreatePage />} />
+        <Route path="images" element={<ImagesPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="labs/:labId" element={<LabWorkspace />}>
           <Route index element={<Navigate to="overview" replace />} />

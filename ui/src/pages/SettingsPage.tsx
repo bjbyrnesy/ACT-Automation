@@ -6,6 +6,10 @@ type Settings = {
   CLAB_IMAGE: string;
   CLAB_NAME: string;
   CLAB_RUNTIME: string;
+  CLAB_HOST_IMAGE: string;
+  CLAB_REGISTRY: string;
+  CLAB_REGISTRY_USER: string;
+  CLAB_REGISTRY_TOKEN: string | null;
   ACT_TENANT: string;
   ACT_USER: string;
   ACT_API_KEY: string | null;
@@ -24,6 +28,10 @@ const EMPTY: Settings = {
   CLAB_IMAGE: "",
   CLAB_NAME: "",
   CLAB_RUNTIME: "",
+  CLAB_HOST_IMAGE: "",
+  CLAB_REGISTRY: "",
+  CLAB_REGISTRY_USER: "",
+  CLAB_REGISTRY_TOKEN: null,
   ACT_TENANT: "",
   ACT_USER: "",
   ACT_API_KEY: null,
@@ -47,6 +55,13 @@ function asSettings(raw: Record<string, unknown>): Settings {
       raw.CLAB_RUNTIME === "docker" || raw.CLAB_RUNTIME === "podman"
         ? String(raw.CLAB_RUNTIME)
         : "",
+    CLAB_HOST_IMAGE: String(raw.CLAB_HOST_IMAGE ?? ""),
+    CLAB_REGISTRY: String(raw.CLAB_REGISTRY ?? ""),
+    CLAB_REGISTRY_USER: String(raw.CLAB_REGISTRY_USER ?? ""),
+    CLAB_REGISTRY_TOKEN:
+      raw.CLAB_REGISTRY_TOKEN === null || raw.CLAB_REGISTRY_TOKEN === undefined
+        ? null
+        : String(raw.CLAB_REGISTRY_TOKEN),
     ACT_TENANT: String(raw.ACT_TENANT ?? ""),
     ACT_USER: String(raw.ACT_USER ?? ""),
     ACT_API_KEY:
@@ -110,6 +125,10 @@ export function SettingsPage() {
           CLAB_IMAGE: form.CLAB_IMAGE,
           CLAB_NAME: form.CLAB_NAME,
           CLAB_RUNTIME: form.CLAB_RUNTIME,
+          CLAB_HOST_IMAGE: form.CLAB_HOST_IMAGE,
+          CLAB_REGISTRY: form.CLAB_REGISTRY,
+          CLAB_REGISTRY_USER: form.CLAB_REGISTRY_USER,
+          CLAB_REGISTRY_TOKEN: form.CLAB_REGISTRY_TOKEN,
           ACT_TENANT: form.ACT_TENANT,
           ACT_USER: form.ACT_USER,
           ACT_API_KEY: form.ACT_API_KEY,
@@ -183,6 +202,47 @@ export function SettingsPage() {
               <option value="docker">docker</option>
               <option value="podman">podman</option>
             </select>
+          </label>
+          <label>
+            CLAB_HOST_IMAGE
+            <input
+              value={form.CLAB_HOST_IMAGE}
+              onChange={(event) =>
+                update("CLAB_HOST_IMAGE", event.target.value)
+              }
+            />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Image registry (optional)</legend>
+          <label>
+            CLAB_REGISTRY
+            <input
+              value={form.CLAB_REGISTRY}
+              placeholder="registry.example.com/team"
+              onChange={(event) => update("CLAB_REGISTRY", event.target.value)}
+            />
+          </label>
+          <label>
+            CLAB_REGISTRY_USER
+            <input
+              value={form.CLAB_REGISTRY_USER}
+              autoComplete="off"
+              onChange={(event) =>
+                update("CLAB_REGISTRY_USER", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            CLAB_REGISTRY_TOKEN
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={form.CLAB_REGISTRY_TOKEN ?? ""}
+              onChange={(event) =>
+                update("CLAB_REGISTRY_TOKEN", event.target.value || null)
+              }
+            />
           </label>
         </fieldset>
         <fieldset>

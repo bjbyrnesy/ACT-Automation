@@ -19,10 +19,12 @@ dev = [
   "black>=25.0",
   "pre-commit>=4.0",
   "fastapi>=0.115",
+  "python-multipart>=0.0.20",
   "uvicorn[standard]>=0.32",
 ]
 ui = [
   "fastapi>=0.115",
+  "python-multipart>=0.0.20",
   "uvicorn[standard]>=0.32",
 ]
 

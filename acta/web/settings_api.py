@@ -9,13 +9,24 @@ from acta.config import load_config, save_config
 from acta.web.errors import WebError
 
 MASK = "••••"
-_SECRET_KEYS = frozenset({"ACT_API_KEY", "CVAAS_TOKEN", "GENERIC_PASSWORD"})
+_SECRET_KEYS = frozenset(
+    {
+        "ACT_API_KEY",
+        "CVAAS_TOKEN",
+        "GENERIC_PASSWORD",
+        "CLAB_REGISTRY_TOKEN",
+    }
+)
 _EXACT_KEYS = frozenset(
     {
         "CLAB_HOST",
         "CLAB_IMAGE",
+        "CLAB_HOST_IMAGE",
         "CLAB_NAME",
         "CLAB_RUNTIME",
+        "CLAB_REGISTRY",
+        "CLAB_REGISTRY_USER",
+        "CLAB_REGISTRY_TOKEN",
         "preview_auto",
         "preview_debounce_ms",
     }
@@ -65,15 +76,21 @@ def get_settings(labs_root: Path) -> dict[str, Any]:
     out: dict[str, Any] = {
         "CLAB_HOST": raw.get("CLAB_HOST", ""),
         "CLAB_IMAGE": raw.get("CLAB_IMAGE", ""),
+        "CLAB_HOST_IMAGE": raw.get("CLAB_HOST_IMAGE", ""),
         "CLAB_NAME": raw.get("CLAB_NAME", ""),
         "CLAB_RUNTIME": raw.get("CLAB_RUNTIME", ""),
+        "CLAB_REGISTRY": raw.get("CLAB_REGISTRY", ""),
+        "CLAB_REGISTRY_USER": raw.get("CLAB_REGISTRY_USER", ""),
+        "CLAB_REGISTRY_TOKEN": _mask_value(
+            "CLAB_REGISTRY_TOKEN",
+            raw.get("CLAB_REGISTRY_TOKEN"),
+        ),
         "preview_auto": _preview_auto(raw),
         "preview_debounce_ms": _preview_debounce_ms(raw),
     }
-    _clab_exact = {"CLAB_HOST", "CLAB_IMAGE", "CLAB_NAME", "CLAB_RUNTIME"}
     for key, value in raw.items():
-        if key.startswith(_PREFIXES) or key in _clab_exact:
-            if key in _clab_exact:
+        if key.startswith(_PREFIXES) or key in _EXACT_KEYS:
+            if key in _EXACT_KEYS:
                 continue
             if not _is_allowed(key):
                 continue

@@ -131,3 +131,10 @@ Desktop.ini
 .vscode/
 *.code-workspace
 ACT Automation.code-workspace
+.worktrees/
+
+# Web UI image uploads
+.acta-uploads/
+
+# Subagent-driven-dev scratch
+.superpowers/

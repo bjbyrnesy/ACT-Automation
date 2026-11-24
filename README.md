@@ -475,6 +475,22 @@ pick up a new bridge.
 `CLAB_HOST_IMAGE`, `CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`,
 `CLAB_DISABLEAAA`, `CVAAS_HOST`, `CVAAS_TOKEN`, …
 
+cEOS is not on Docker Hub. Load an Arista archive on the lab host with Web UI
+**Images → Upload & load**, or `docker load` / `podman load`. An optional
+registry (Settings `CLAB_REGISTRY`) is only for copying that image to other
+lab hosts. `CLAB_REGISTRY` must be `host[:port][/path]`; short names (including
+namespaced ones like `acta/ceos:1`) are prefixed with it, while refs whose first
+segment has a `.` or `:` (e.g. `other.io:5000/ceos:1`) are used as-is.
+
+**Podman store vs `sudo containerlab`:** rootless and rootful podman have
+separate image stores. If deploy runs `sudo -n containerlab` as a non-root user,
+images must be in root's store. The Images page therefore uses `sudo -n podman`
+for list/load/tag/push/pull when the runtime is podman, the lab-host user is
+not root, and passwordless sudo works. If it does not, the page and job logs
+show a `WARNING:` and the operation proceeds rootless; load manually with
+`sudo podman load -i <archive>` on the host. The linux jumphost image is separate: `scripts/build-host-image.sh`
+(default `CLAB_HOST_IMAGE=localhost/acta-host-multitool:v0.10.0-mcast0.2.3`).
+
 Full flag lists: `python acta.py clab <command> --help`.
 
 ---

@@ -5,6 +5,7 @@ import "./LeftNav.css";
 
 const PRIMARY = [
   { to: "/new", label: "New lab", end: true },
+  { to: "/images", label: "Images", end: true },
   { to: "/settings", label: "Settings", end: true },
 ] as const;
 
