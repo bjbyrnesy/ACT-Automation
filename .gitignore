@@ -50,11 +50,14 @@ topology*
 *.yml
 !.github/
 !.github/**/*.yml
+!.forgejo/
+!.forgejo/**/*.yml
 !.env.example
 !.config.example
 # Tracked sample topologies for docs / smoke (copy into labs/ to use).
 !examples/
 !examples/**/*.yml
+
 
 *.yaml
 !.github/**/*.yaml

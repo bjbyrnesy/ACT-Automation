@@ -29,6 +29,23 @@ to CVaaS without ZTP is tedious. `acta.py`:
 Intentional scope: Campus Fabric and L3LS / EVPN Studios shapes — not every possible
 topology.
 
+## Origins
+
+This project started from
+[rclarkarista/ACT-Automation](https://github.com/rclarkarista/ACT-Automation)
+and has been substantially extended (Web UI, containerlab workflow, attach/detach,
+Images page, …).
+
+**Canonical development** is on household Forgejo:
+
+```bash
+git clone ssh://git@forgejo.freeblizz.com/coreyhines/acta.git
+# or: https://forgejo.freeblizz.com/coreyhines/acta.git
+```
+
+GitHub `bjbyrnesy/ACT-Automation` remains a transition mirror until a public
+GitHub publish is cut over.
+
 ## Install
 
 Everything you need lives in this section. Later chapters only point here.
@@ -623,9 +640,11 @@ carry over) when you keep the same identities.
 | `acta/` | Implementation package |
 | `pyproject.toml` / `uv.lock` | Python ≥3.15 project |
 | `.pre-commit-config.yaml` | Local gitleaks + Black/Ruff |
-| `.github/workflows/` | CI + security Actions |
-| `topology-<prefix>-<date>.yml` | Create output (gitignored pattern) |
-| `.config` | Local answers / tokens (**gitignored**) |
+| `.forgejo/workflows/` | Forgejo Actions (canonical CI) |
+| `.github/workflows/` | GitHub Actions (mirror / public later) |
+| `labs/` | Local topology working copy (**gitignored**) |
+| `examples/` | Tracked sample topologies |
+| `.config` | Local answers / tokens (**gitignored**; under `labs/` when using `--root labs`) |
 
 ---
 
@@ -652,9 +671,11 @@ Topologies set `legacy_eos_versioning: false` so CVaaS can drive EOS upgrades in
 **Local:** pre-commit (Gitleaks on commit; full scan on push; block `.config`/`.env`;
 Black/Ruff).
 
-**GitHub Actions:** same pre-commit suite + pytest; Gitleaks, zizmor, Trivy;
-Dependabot for Actions/pip. CodeQL / native Secret scanning need a repo
-**owner** and are not run in CI; collaborators are covered by pre-commit + Gitleaks.
+**Forgejo Actions** (canonical): `.forgejo/workflows/ci.yml` runs pre-commit +
+pytest on the household runner label `ansible-net10`.
+
+**GitHub Actions** (mirror): same suite plus Gitleaks/zizmor/Trivy security
+workflows until public publish. Dependabot remains GitHub-only for now.
 
 ## TODO
 
