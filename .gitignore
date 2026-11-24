@@ -39,6 +39,10 @@ secrets.*
 # ---------------------------------------------------------------------------
 # Generated topology / lab artifacts (keep GitHub Actions YAML trackable)
 # ---------------------------------------------------------------------------
+# Local Web UI / CLI working labs (never commit real topologies here).
+labs/**
+!labs/.gitkeep
+
 topology*
 !acta/topology*.py
 !tests/test_topology*.py
@@ -48,6 +52,9 @@ topology*
 !.github/**/*.yml
 !.env.example
 !.config.example
+# Tracked sample topologies for docs / smoke (copy into labs/ to use).
+!examples/
+!examples/**/*.yml
 
 *.yaml
 !.github/**/*.yaml

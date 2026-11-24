@@ -14,6 +14,15 @@ from acta.web.app import create_app
 _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
+def default_labs_root() -> Path:
+    """Return ``./labs`` under the current working directory.
+
+    Topology YAML belongs here (gitignored), not in the repo root. Tracked
+    samples live under ``examples/`` and should be copied into ``labs/``.
+    """
+    return Path.cwd() / "labs"
+
+
 def run_serve(
     *,
     host: str = "127.0.0.1",
@@ -28,7 +37,8 @@ def run_serve(
             f"ERROR: refusing non-loopback bind {bind!r} "
             "(use 127.0.0.1 / localhost for v1)"
         )
-    root = (labs_root or Path.cwd()).resolve()
+    root = (labs_root or default_labs_root()).resolve()
+    root.mkdir(parents=True, exist_ok=True)
     app = create_app(labs_root=root)
     url = f"http://{bind}:{port}/"
     print(f"ACTA Web UI listening on {url}", flush=True)
