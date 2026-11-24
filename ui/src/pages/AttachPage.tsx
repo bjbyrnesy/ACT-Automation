@@ -239,7 +239,12 @@ export function AttachPage() {
             ? "dual-homed"
             : `single-homed (${pairHoming === "a" ? pairPeerA : pairPeerB})`;
       }
-      setStatus(`Attached ${host.trim()} → ${homeBit} → ${result.name}.`);
+      const dataPlane = result.host_net_ip
+        ? ` Data-plane ${result.host_net_ip} on ${result.host_net_iface ?? "?"}.`
+        : "";
+      setStatus(
+        `Attached ${host.trim()} → ${homeBit} → ${result.name}.${dataPlane}`,
+      );
       setHost("");
       setTargetKey("");
       setPairHoming("dual");

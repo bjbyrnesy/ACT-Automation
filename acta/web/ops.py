@@ -13,10 +13,13 @@ import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 from acta.web.errors import WebError
+
+if TYPE_CHECKING:
+    from acta.attach import AttachResult
 
 
 def require_written_path(path: Path | None) -> Path:
@@ -291,6 +294,11 @@ def _quiet() -> Iterator[None]:
 
 def op_attach(path: Path, **kwargs: Any) -> Path:
     """Attach a generic host to a topology and return the updated file path."""
+    return op_attach_result(path, **kwargs).path
+
+
+def op_attach_result(path: Path, **kwargs: Any) -> AttachResult:
+    """Attach a generic host and return the full result (incl. host-net plan)."""
     from acta.attach import run_attach
 
     topology = require_written_path(path)
@@ -317,7 +325,7 @@ def op_attach(path: Path, **kwargs: Any) -> Path:
             host_subnet=kwargs.get("host_subnet"),
             host_gateway=kwargs.get("host_gateway"),
         )
-    return result.path
+    return result
 
 
 def op_detach(path: Path, **kwargs: Any) -> Path:

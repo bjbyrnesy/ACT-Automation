@@ -294,3 +294,82 @@ def test_linux_jumphost_node_host_net_requires_dir():
     plan = hn.HostNetPlan("192.168.2.5", "192.168.2.0/24", "192.168.2.1", "eth1", False)
     with pytest.raises(ValueError, match="host_net_dir"):
         linux_jumphost_node("img:tag", host_net=plan)
+
+
+def test_claimed_ips_skips_null_non_str_and_malformed_ips():
+    lab = {
+        "topology": {
+            "nodes": {
+                "null": {"labels": {"acta.host-net": "true", "acta.host-ip": None}},
+                "int": {"labels": {"acta.host-net": True, "acta.host-ip": 7}},
+                "junk": {"labels": {"acta.host-net": "true", "acta.host-ip": "nope"}},
+                "ok": {
+                    "labels": {"acta.host-net": True, "acta.host-ip": "192.168.2.4"}
+                },
+            }
+        }
+    }
+    assert hn.claimed_ips_from_clab(lab) == {"192.168.2.4"}
+    assert hn.next_host_ip("192.168.2.0/24", "192.168.2.1", set()) == "192.168.2.2"
+
+
+def test_resolve_blank_overrides_and_settings_fall_back_to_defaults():
+    plan = hn.resolve_host_net(
+        enabled=True,
+        host_ip="  ",
+        host_subnet=" ",
+        host_gateway="",
+        config={"HOST_NET_SUBNET": "   ", "HOST_NET_GATEWAY": "\t"},
+        claimed=set(),
+        dual_homed=False,
+    )
+    assert plan is not None
+    assert (plan.ip, plan.subnet, plan.gateway) == (
+        "192.168.2.2",
+        hn.DEFAULT_HOST_NET_SUBNET,
+        hn.DEFAULT_HOST_NET_GATEWAY,
+    )
+
+
+def test_render_md_flushes_before_changing_ip():
+    md = hn.render_host_net_md(_single(), host="host1")
+    assert "ip -4 addr flush dev eth1" in md
+    assert "ip addr replace <new-ip>" not in md
+
+
+def test_host_net_bind_dir_is_relative(tmp_path: Path):
+    rel = hn.host_net_bind_dir(tmp_path / "demo.clab.yml", "h1")
+    assert not rel.is_absolute()
+    assert rel.as_posix() == "demo.host-net/h1"
+
+
+def test_plan_from_labels_round_trips_and_follows_homing():
+    labels = hn.host_net_labels(_single())
+    assert hn.plan_from_labels(labels, dual_homed=False) == _single()
+    dual = hn.plan_from_labels(labels, dual_homed=True)
+    assert (dual.iface, dual.dual_homed, dual.ip) == ("bond0", True, "192.168.2.10")
+    with pytest.raises(ValueError, match="acta.host-ip"):
+        hn.plan_from_labels({"acta.host-net": "true"}, dual_homed=False)
+
+
+def test_host_net_bind_sources_only_relative_enabled_nodes():
+    from acta.clab.support import linux_jumphost_node
+
+    rel = hn.host_net_bind_dir(Path("demo.clab.yml"), "h1")
+    lab = {
+        "topology": {
+            "nodes": {
+                "h1": linux_jumphost_node("img", host_net=_single(), host_net_dir=rel),
+                "abs": {
+                    "labels": {"acta.host-net": "true"},
+                    "binds": ["/Users/x/demo.host-net/abs/bootstrap.sh:/b:ro"],
+                },
+                "off": {"binds": ["demo.host-net/off/bootstrap.sh:/b:ro"]},
+            }
+        }
+    }
+    assert hn.host_net_bind_sources(lab) == [
+        "demo.host-net/h1/bootstrap.sh",
+        "demo.host-net/h1/HOST-NET.md",
+        "demo.host-net/h1/HOST-NET.env",
+    ]

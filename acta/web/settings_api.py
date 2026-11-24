@@ -144,7 +144,7 @@ def patch_settings(labs_root: Path, updates: dict[str, Any]) -> dict[str, Any]:
         text = value if isinstance(value, str) else str(value)
         if key in _SECRET_KEYS and text == MASK:
             continue
-        if key == "CLAB_HOST":
+        if key in {"CLAB_HOST", "HOST_NET_SUBNET", "HOST_NET_GATEWAY"}:
             data[key] = text.strip()
             continue
         if key == "CLAB_RUNTIME":

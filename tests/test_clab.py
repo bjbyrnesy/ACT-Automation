@@ -1013,6 +1013,53 @@ links:
             self.assertEqual(names, {"configs/base-config.eos", "configs/SN/a.eos"})
             self.assertNotIn("configs/SN/blz2-host1.eos", names)
 
+    def _host_net_lab(self, root):
+        from acta.clab.host_net import HostNetPlan, host_net_bind_dir
+
+        plan = HostNetPlan(
+            "192.168.2.5", "192.168.2.0/24", "192.168.2.1", "eth1", False
+        )
+        clab_path = root / "demo.clab.yml"
+        artifact_dir = root / host_net_bind_dir(clab_path, "h1")
+        clab.write_host_net_files(artifact_dir.parent, "h1", plan)
+        node = clab.linux_jumphost_node(
+            "img:tag", host_net=plan, host_net_dir=host_net_bind_dir(clab_path, "h1")
+        )
+        return {"topology": {"nodes": {"h1": node}}}
+
+    def test_support_bundle_ships_host_net_artifacts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            lab = self._host_net_lab(root)
+            with tarfile.open(
+                fileobj=io.BytesIO(base64.b64decode(clab.support_bundle(root, lab))),
+                mode="r:gz",
+            ) as archive:
+                self.assertEqual(
+                    set(archive.getnames()),
+                    {
+                        "demo.host-net/h1/bootstrap.sh",
+                        "demo.host-net/h1/HOST-NET.md",
+                        "demo.host-net/h1/HOST-NET.env",
+                    },
+                )
+
+    def test_support_upload_overwrites_host_net_artifacts(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            src = root / "src"
+            src.mkdir()
+            lab = self._host_net_lab(src)
+            bundle = clab.support_bundle(src, lab)
+            remote = root / ".act-automation/clab/demo/demo.host-net/h1/bootstrap.sh"
+            with mock.patch.dict(os.environ, {"HOME": d}):
+                first = clab.host_run(None, clab.SUPPORT_SCRIPT, ["demo"], bundle)
+                self.assertEqual(first.returncode, 0, first.stderr)
+                remote.write_text("stale")
+                second = clab.host_run(None, clab.SUPPORT_SCRIPT, ["demo"], bundle)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("192.168.2.5/24", remote.read_text())
+
     def test_support_bundle_accepts_previously_generated_txt_identity(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)

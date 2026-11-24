@@ -116,6 +116,9 @@ export type SavedTopology = {
   yaml_text?: string;
   /** Prefer these over ACT ``ip_addr`` (clab sibling / live inspect). */
   mgmt_ips?: Record<string, string>;
+  /** Set by ``/api/attach`` when ``host_net`` assigned a data-plane address. */
+  host_net_ip?: string;
+  host_net_iface?: string;
 };
 
 export type AttachMlagPair = {

@@ -579,6 +579,17 @@ acta attach host host1 topology-….yml --mlag-pair 1 --host-net
   `/root/HOST-NET.md` + `/root/HOST-NET.env`. ACT configures the **host side
   only** — configure the matching switch access port or MLAG LACP Port-Channel,
   VLAN, and SVI in CloudVision.
+  - Requires the sibling `.clab.yml` (run `clab generate` first); attach fails
+    without it and writes nothing. The assigned IP is printed (CLI) / shown in
+    the Attach status (Web UI) and stored as `acta.host-*` node labels.
+  - `clab generate` (and deploy with `--from-act` / `CLAB_FROM_ACT`) re-reads
+    those labels from the existing sibling, so regenerating keeps the IP.
+  - Artifacts live in `<lab>.host-net/<host>/` next to the `.clab.yml` and are
+    bound with **relative** paths. Deploy ships them with the support bundle to
+    `~/.act-automation/clab/<lab>/` on the lab host (local or remote
+    `CLAB_HOST`) and always overwrites the remote copy.
+  - The default route moves to the data-plane interface; `eth0` keeps on-link
+    management access only.
 - Use case policy: datacenter → leaf/mleaf/border only; campus → those plus
   **spines** (common on small L2LS campuses when access ports are scarce).
 - `detach host` removes the generic node and its uplinks from ACT (and the

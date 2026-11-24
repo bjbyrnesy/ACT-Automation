@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 DEFAULT_HOST_NET_SUBNET = "192.168.2.0/24"
 DEFAULT_HOST_NET_GATEWAY = "192.168.2.1"
@@ -70,23 +70,88 @@ def next_host_ip(subnet: str, gateway: str, claimed: set[str]) -> str:
     raise ValueError(f"no free host addresses left in {subnet}")
 
 
+def _clean(value: object) -> str:
+    """Return a stripped string, or ``""`` for null / non-string values."""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _label_ip(labels: dict) -> str:
+    """Return the bare host IP from labels, or ``""`` when missing/malformed."""
+    ip = _clean(labels.get(LABEL_IP) or "").split("/", 1)[0]
+    if not ip:
+        return ""
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        return ""
+    return ip
+
+
+def host_net_enabled(labels: object) -> bool:
+    """Return True when containerlab node labels opt into host-net."""
+    if not isinstance(labels, dict):
+        return False
+    return str(labels.get(LABEL_ENABLED, "")).strip().lower() in {"1", "true", "yes"}
+
+
+def _lab_nodes(lab: dict) -> dict:
+    nodes = ((lab.get("topology") or {}).get("nodes")) or {}
+    return nodes if isinstance(nodes, dict) else {}
+
+
 def claimed_ips_from_clab(lab: dict) -> set[str]:
     """Extract claimed host data-plane IPs from containerlab node labels."""
-    nodes = ((lab.get("topology") or {}).get("nodes")) or {}
     out: set[str] = set()
-    if not isinstance(nodes, dict):
-        return out
-    for node in nodes.values():
+    for node in _lab_nodes(lab).values():
         if not isinstance(node, dict):
             continue
-        labels = node.get("labels") or {}
-        if not isinstance(labels, dict):
+        labels = node.get("labels")
+        if not host_net_enabled(labels):
             continue
-        if str(labels.get(LABEL_ENABLED, "")).lower() not in {"1", "true", "yes"}:
-            continue
-        ip = str(labels.get(LABEL_IP, "")).strip()
+        ip = _label_ip(labels)
         if ip:
-            out.add(ip.split("/", 1)[0])
+            out.add(ip)
+    return out
+
+
+def host_net_labels_by_node(lab: dict) -> dict[str, dict]:
+    """Return ``{node: labels}`` for every host-net enabled node in ``lab``."""
+    return {
+        name: node["labels"]
+        for name, node in _lab_nodes(lab).items()
+        if isinstance(node, dict) and host_net_enabled(node.get("labels"))
+    }
+
+
+def plan_from_labels(labels: dict, *, dual_homed: bool) -> HostNetPlan:
+    """Rebuild a ``HostNetPlan`` from persisted ``acta.host-*`` labels."""
+    ip = _label_ip(labels)
+    if not ip:
+        raise ValueError(f"missing or invalid {LABEL_IP} label")
+    subnet = _clean(labels.get(LABEL_SUBNET)) or DEFAULT_HOST_NET_SUBNET
+    gateway = _clean(labels.get(LABEL_GATEWAY)) or DEFAULT_HOST_NET_GATEWAY
+    validate_host_net(subnet, gateway, ip)
+    return HostNetPlan(
+        ip=ip,
+        subnet=subnet,
+        gateway=gateway,
+        iface="bond0" if dual_homed else "eth1",
+        dual_homed=dual_homed,
+    )
+
+
+def host_net_bind_sources(lab: dict) -> list[str]:
+    """Return relative ``<stem>.host-net/...`` bind sources used by ``lab``."""
+    out: list[str] = []
+    for node in _lab_nodes(lab).values():
+        if not isinstance(node, dict) or not host_net_enabled(node.get("labels")):
+            continue
+        for bind in node.get("binds") or []:
+            source = PurePosixPath(str(bind).split(":", 1)[0])
+            if source.is_absolute() or ".." in source.parts:
+                continue
+            if source.parts and source.parts[0].endswith(".host-net"):
+                out.append(source.as_posix())
     return out
 
 
@@ -105,12 +170,16 @@ def resolve_host_net(
         return None
     cfg = config or {}
     subnet = (
-        host_subnet or cfg.get("HOST_NET_SUBNET") or DEFAULT_HOST_NET_SUBNET
-    ).strip()
+        _clean(host_subnet)
+        or _clean(cfg.get("HOST_NET_SUBNET"))
+        or DEFAULT_HOST_NET_SUBNET
+    )
     gateway = (
-        host_gateway or cfg.get("HOST_NET_GATEWAY") or DEFAULT_HOST_NET_GATEWAY
-    ).strip()
-    explicit = host_ip.strip() if host_ip else None
+        _clean(host_gateway)
+        or _clean(cfg.get("HOST_NET_GATEWAY"))
+        or DEFAULT_HOST_NET_GATEWAY
+    )
+    explicit = _clean(host_ip) or None
     validate_host_net(subnet, gateway, explicit)
     if explicit:
         if explicit in claimed:
@@ -220,9 +289,12 @@ def render_host_net_md(plan: HostNetPlan, *, host: str) -> str:
         "to lab endpoints and the default route use the data plane.\n\n"
         f"{topo}\n"
         "## Changing the IP\n\n"
-        "Temporary (until restart):\n\n"
+        "Temporary (until restart). Flush the old address first; "
+        "`ip addr replace` with a different IP adds a second address instead "
+        "of swapping it:\n\n"
         "```sh\n"
-        f"ip addr replace <new-ip>/{plan.prefixlen} dev {plan.iface}\n"
+        f"ip -4 addr flush dev {plan.iface}\n"
+        f"ip addr add <new-ip>/{plan.prefixlen} dev {plan.iface}\n"
         f"ip route replace default via <gateway> dev {plan.iface}\n"
         "```\n\n"
         "Persistent: re-run the bootstrap script after editing the values, or "
@@ -234,15 +306,24 @@ def render_host_net_md(plan: HostNetPlan, *, host: str) -> str:
     )
 
 
-def host_net_artifact_dir(clab_path: Path, host: str) -> Path:
-    """Return the per-host artifact directory next to a containerlab file."""
+def host_net_bind_dir(clab_path: Path, host: str) -> PurePosixPath:
+    """Return the per-host artifact dir relative to the containerlab file.
+
+    containerlab resolves relative bind sources against the topology file's
+    directory, so these binds travel with the topology to ``CLAB_HOST``.
+    """
     name = clab_path.name
     stem = clab_path.stem
     for suffix in (".clab.yml", ".clab.yaml", ".yml", ".yaml"):
         if name.endswith(suffix):
             stem = name[: -len(suffix)]
             break
-    return clab_path.parent / f"{stem}.host-net" / host
+    return PurePosixPath(f"{stem}.host-net", host)
+
+
+def host_net_artifact_dir(clab_path: Path, host: str) -> Path:
+    """Return the per-host artifact directory next to a containerlab file."""
+    return clab_path.parent / host_net_bind_dir(clab_path, host)
 
 
 def write_host_net_files(

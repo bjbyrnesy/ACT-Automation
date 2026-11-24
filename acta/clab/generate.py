@@ -8,6 +8,16 @@ import shlex
 import subprocess
 from pathlib import Path
 
+import yaml
+
+from .host_net import (
+    HostNetPlan,
+    host_net_artifact_dir,
+    host_net_bind_dir,
+    host_net_labels_by_node,
+    plan_from_labels,
+    write_host_net_files,
+)
 from .layout import topology_layout, viewer_annotations
 from .support import (
     DEFAULT_HOST_IMAGE,
@@ -151,6 +161,46 @@ def yaml_text(data):
                 break
         lines.append(line)
     return MARKER + "\n".join(lines) + "\n"
+
+
+def _preserve_host_net(
+    output: Path, nodes: dict, links: list, host_image: str
+) -> dict[str, HostNetPlan]:
+    """Carry ``attach --host-net`` state from an existing ``output`` into ``nodes``.
+
+    Host-net lives only in the sibling clab labels, so regenerating from ACT
+    must re-read them or the data-plane address is silently dropped.
+    """
+    if not output.is_file():
+        return {}
+    try:
+        existing = yaml.safe_load(output.read_text(encoding="utf-8"))
+    except OSError, yaml.YAMLError:
+        return {}
+    if not isinstance(existing, dict):
+        return {}
+    plans: dict[str, HostNetPlan] = {}
+    for host, labels in host_net_labels_by_node(existing).items():
+        node = nodes.get(host)
+        if not isinstance(node, dict) or node.get("kind") != "linux":
+            continue
+        uplinks = sum(
+            1
+            for link in links
+            if any(str(end).startswith(f"{host}:") for end in link["endpoints"])
+        )
+        try:
+            plan = plan_from_labels(labels, dual_homed=uplinks >= 2)
+        except ValueError as exc:
+            fail(f"Invalid host-net labels for {host} in {output}: {exc}")
+        nodes[host] = linux_jumphost_node(
+            host_image,
+            mgmt_ipv4=node.get("mgmt-ipv4"),
+            host_net=plan,
+            host_net_dir=host_net_bind_dir(output, host),
+        )
+        plans[host] = plan
+    return plans
 
 
 def generate(args):
@@ -324,6 +374,7 @@ def generate(args):
         output = Path(args.source).with_name(f"{Path(args.source).stem}.clab.yml")
     else:
         output = Path(f"{args.name}.clab.yml")
+    host_net_plans = _preserve_host_net(output, nodes, links, host_image)
     config_dir = output.parent / "configs"
     serial_dir = config_dir / "SN"
     if config_dir.is_symlink() or serial_dir.is_symlink():
@@ -345,6 +396,8 @@ def generate(args):
         serial_path = serial_dir / f"{node}.eos"
         if not serial_path.exists():
             serial_path.write_text(content)
+    for host, plan in host_net_plans.items():
+        write_host_net_files(host_net_artifact_dir(output, host).parent, host, plan)
     output.write_text(rendered)
     annotations_path = Path(str(output) + ".annotations.json")
     if annotations_path.exists():

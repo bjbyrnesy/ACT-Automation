@@ -720,6 +720,53 @@ def test_run_attach_host_net_passthrough(tmp_path: Path):
     assert _clab_node(clab, "jump1")["labels"]["acta.host-ip"] == "192.168.2.40"
 
 
+def test_attach_host_net_binds_are_relative_to_clab(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    result = attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True)
+    binds = _clab_node(clab, "jump1")["binds"]
+    assert binds[0] == (
+        "topology-demo.host-net/jump1/bootstrap.sh:/etc/acta-host-net/bootstrap.sh:ro"
+    )
+    assert not any(bind.startswith("/") for bind in binds)
+    assert result.host_net is not None
+    assert result.host_net.ip == "192.168.2.2"
+
+
+@pytest.mark.parametrize("sync_sibling", [True, False])
+def test_attach_host_net_without_sibling_raises_before_write(
+    tmp_path: Path, sync_sibling: bool
+):
+    act = _topo(tmp_path)
+    original = act.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="sibling .clab.yml"):
+        attach_host_act(
+            act,
+            "jump1",
+            to=["demo-leaf1:Ethernet10"],
+            host_net=True,
+            sync_sibling=sync_sibling,
+        )
+    assert act.read_text(encoding="utf-8") == original
+
+
+def test_run_attach_prints_data_plane_address(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    act, _clab = _topo_with_clab(tmp_path)
+    run_attach(
+        "host",
+        "jump1",
+        act,
+        mlag_pair=1,
+        et=11,
+        host_net=True,
+        project_dir=tmp_path,
+    )
+    assert "Data-plane: 192.168.2.2/24 on bond0 via 192.168.2.1" in (
+        capsys.readouterr().out
+    )
+
+
 def test_cli_attach_help_lists_host_net_flags():
     import subprocess
     import sys

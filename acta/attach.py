@@ -19,6 +19,7 @@ from acta.clab.host_net import (
     HostNetPlan,
     claimed_ips_from_clab,
     host_net_artifact_dir,
+    host_net_bind_dir,
     resolve_host_net,
     write_host_net_files,
 )
@@ -66,6 +67,7 @@ class AttachResult:
     links: tuple[str, ...]
     sibling: Path | None
     warnings: tuple[str, ...]
+    host_net: HostNetPlan | None = None
 
 
 def _node_role(name: str) -> str | None:
@@ -351,8 +353,9 @@ def claimed_ips_excluding_host(clab_path: Path, host: str) -> set[str]:
     nodes = (data.get("topology") or {}).get("nodes") or {}
     node = nodes.get(host) if isinstance(nodes, dict) else None
     labels = node.get("labels") if isinstance(node, dict) else None
-    if isinstance(labels, dict) and labels.get(LABEL_IP):
-        claimed.discard(str(labels[LABEL_IP]).split("/", 1)[0])
+    own_ip = labels.get(LABEL_IP) if isinstance(labels, dict) else None
+    if isinstance(own_ip, str):
+        claimed.discard(own_ip.strip().split("/", 1)[0])
     return claimed
 
 
@@ -436,6 +439,11 @@ def attach_host_act(
 
     sibling: Path | None = None
     candidate = _find_sibling_clab(path) if sync_sibling else None
+    if host_net and candidate is None:
+        raise ValueError(
+            f"--host-net needs a sibling .clab.yml next to {path.name} "
+            "(run clab generate first); nothing was written"
+        )
     # Resolve once (before any write) so a bad --host-ip leaves files untouched.
     plan: HostNetPlan | None = resolve_host_net(
         enabled=host_net,
@@ -466,12 +474,6 @@ def attach_host_act(
                 "ACT updated only (run clab generate to sync).",
                 file=sys.stderr,
             )
-            if plan is not None:
-                print(
-                    "Note: --host-net needs a sibling .clab.yml; "
-                    "no data-plane addressing was written.",
-                    file=sys.stderr,
-                )
 
     path.write_text(text, encoding="utf-8")
 
@@ -481,6 +483,7 @@ def attach_host_act(
         links=tuple(link_descs),
         sibling=sibling,
         warnings=tuple(warnings),
+        host_net=plan,
     )
 
 
@@ -732,14 +735,13 @@ def sync_host_into_clab(
     else:
         mgmt_ip = next_mgmt_ipv4(data)
     if host_net_plan is not None:
-        # Absolute so binds resolve regardless of containerlab's cwd.
-        artifact_dir = host_net_artifact_dir(clab_path.resolve(), host)
+        artifact_dir = host_net_artifact_dir(clab_path, host)
         write_host_net_files(artifact_dir.parent, host, host_net_plan)
         nodes[host] = linux_jumphost_node(
             image,
             mgmt_ipv4=mgmt_ip,
             host_net=host_net_plan,
-            host_net_dir=artifact_dir,
+            host_net_dir=host_net_bind_dir(clab_path, host),
         )
     else:
         nodes[host] = linux_jumphost_node(image, mgmt_ipv4=mgmt_ip)
@@ -909,4 +911,10 @@ def run_attach(
         print(f"  {link}")
     if result.sibling is not None:
         print(f"Synced {result.sibling.name}")
+    plan = result.host_net
+    if plan is not None:
+        print(
+            f"Data-plane: {plan.ip}/{plan.prefixlen} on {plan.iface} "
+            f"via {plan.gateway}"
+        )
     return result
