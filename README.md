@@ -475,6 +475,12 @@ pick up a new bridge.
 `CLAB_HOST_IMAGE`, `CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`,
 `CLAB_DISABLEAAA`, `CVAAS_HOST`, `CVAAS_TOKEN`, …
 
+cEOS is not on Docker Hub. Load an Arista archive on the lab host with Web UI
+**Images → Upload & load**, or `docker load` / `podman load`. An optional
+registry (Settings `CLAB_REGISTRY`) is only for copying that image to other
+lab hosts. The linux jumphost image is separate: `scripts/build-host-image.sh`
+(default `CLAB_HOST_IMAGE=localhost/acta-host-multitool:v0.10.0-mcast0.2.3`).
+
 Full flag lists: `python acta.py clab <command> --help`.
 
 ---
