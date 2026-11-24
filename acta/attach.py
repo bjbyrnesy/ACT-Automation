@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,14 @@ from acta.capacity import (
     host_attach_roles,
     normalize_use_case,
     parse_capacity_header,
+)
+from acta.clab.host_net import (
+    LABEL_IP,
+    HostNetPlan,
+    claimed_ips_from_clab,
+    host_net_artifact_dir,
+    resolve_host_net,
+    write_host_net_files,
 )
 from acta.clab.support import (
     DEFAULT_HOST_IMAGE,
@@ -328,6 +337,25 @@ def _resolve_endpoints(
     return endpoints, warnings
 
 
+def claimed_ips_excluding_host(clab_path: Path, host: str) -> set[str]:
+    """Data-plane IPs claimed in ``clab_path``, ignoring ``host``'s own prior IP.
+
+    Lets a re-attach of the same host reuse (or replace) its previous address.
+    """
+    import yaml
+
+    data = yaml.safe_load(clab_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        return set()
+    claimed = claimed_ips_from_clab(data)
+    nodes = (data.get("topology") or {}).get("nodes") or {}
+    node = nodes.get(host) if isinstance(nodes, dict) else None
+    labels = node.get("labels") if isinstance(node, dict) else None
+    if isinstance(labels, dict) and labels.get(LABEL_IP):
+        claimed.discard(str(labels[LABEL_IP]).split("/", 1)[0])
+    return claimed
+
+
 def attach_host_act(
     path: Path,
     host: str,
@@ -340,6 +368,10 @@ def attach_host_act(
     mlag_side: str | None = None,
     config: dict[str, str] | None = None,
     sync_sibling: bool = True,
+    host_net: bool = False,
+    host_ip: str | None = None,
+    host_subnet: str | None = None,
+    host_gateway: str | None = None,
 ) -> AttachResult:
     """Attach a generic host to an ACT topology YAML."""
     text = path.read_text(encoding="utf-8")
@@ -403,14 +435,29 @@ def attach_host_act(
         )
 
     sibling: Path | None = None
+    candidate = _find_sibling_clab(path) if sync_sibling else None
+    # Resolve once (before any write) so a bad --host-ip leaves files untouched.
+    plan: HostNetPlan | None = resolve_host_net(
+        enabled=host_net,
+        host_ip=host_ip,
+        host_subnet=host_subnet,
+        host_gateway=host_gateway,
+        config=cfg,
+        claimed=(
+            claimed_ips_excluding_host(candidate, host)
+            if candidate is not None
+            else set()
+        ),
+        dual_homed=len(link_descs) >= 2,
+    )
     if sync_sibling:
-        candidate = _find_sibling_clab(path)
         if candidate is not None:
             sync_host_into_clab(
                 candidate,
                 host,
                 act_text=text,
                 image=cfg.get("CLAB_HOST_IMAGE") or DEFAULT_HOST_IMAGE,
+                host_net_plan=plan,
             )
             sibling = candidate
         else:
@@ -419,6 +466,12 @@ def attach_host_act(
                 "ACT updated only (run clab generate to sync).",
                 file=sys.stderr,
             )
+            if plan is not None:
+                print(
+                    "Note: --host-net needs a sibling .clab.yml; "
+                    "no data-plane addressing was written.",
+                    file=sys.stderr,
+                )
 
     path.write_text(text, encoding="utf-8")
 
@@ -588,6 +641,9 @@ def detach_host_act(
         candidate = _find_sibling_clab(path)
         if candidate is not None:
             remove_host_from_clab(candidate, host)
+            shutil.rmtree(
+                host_net_artifact_dir(candidate.resolve(), host), ignore_errors=True
+            )
             sibling = candidate
         else:
             print(
@@ -651,6 +707,7 @@ def sync_host_into_clab(
     *,
     act_text: str,
     image: str,
+    host_net_plan: HostNetPlan | None = None,
 ) -> None:
     """Add/update a linux host node and links in an existing .clab.yml from ACT."""
     import yaml
@@ -674,7 +731,18 @@ def sync_host_into_clab(
         mgmt_ip = str(existing["mgmt-ipv4"]).split("/", 1)[0]
     else:
         mgmt_ip = next_mgmt_ipv4(data)
-    nodes[host] = linux_jumphost_node(image, mgmt_ipv4=mgmt_ip)
+    if host_net_plan is not None:
+        # Absolute so binds resolve regardless of containerlab's cwd.
+        artifact_dir = host_net_artifact_dir(clab_path.resolve(), host)
+        write_host_net_files(artifact_dir.parent, host, host_net_plan)
+        nodes[host] = linux_jumphost_node(
+            image,
+            mgmt_ipv4=mgmt_ip,
+            host_net=host_net_plan,
+            host_net_dir=artifact_dir,
+        )
+    else:
+        nodes[host] = linux_jumphost_node(image, mgmt_ipv4=mgmt_ip)
 
     # Drop prior links involving this host, then append.
     kept: list = []
@@ -722,6 +790,10 @@ def attach_host_clab(
     dual_homed: bool = True,
     mlag_side: str | None = None,
     config: dict[str, str] | None = None,
+    host_net: bool = False,
+    host_ip: str | None = None,
+    host_subnet: str | None = None,
+    host_gateway: str | None = None,
 ) -> AttachResult:
     """Attach a linux host directly into a .clab.yml (no ACT mutation)."""
     import yaml
@@ -756,6 +828,10 @@ def attach_host_clab(
             mlag_side=mlag_side,
             config=config,
             sync_sibling=True,
+            host_net=host_net,
+            host_ip=host_ip,
+            host_subnet=host_subnet,
+            host_gateway=host_gateway,
         )
 
     raise ValueError(
@@ -776,6 +852,10 @@ def run_attach(
     dual_homed: bool = True,
     mlag_side: str | None = None,
     project_dir: Path | None = None,
+    host_net: bool = False,
+    host_ip: str | None = None,
+    host_subnet: str | None = None,
+    host_gateway: str | None = None,
 ) -> AttachResult:
     if object_type != "host":
         raise ValueError(f"unsupported attach object type: {object_type!r} (v1: host)")
@@ -800,6 +880,10 @@ def run_attach(
             dual_homed=dual_homed,
             mlag_side=mlag_side,
             config=config,
+            host_net=host_net,
+            host_ip=host_ip,
+            host_subnet=host_subnet,
+            host_gateway=host_gateway,
         )
     else:
         result = attach_host_act(
@@ -812,6 +896,10 @@ def run_attach(
             dual_homed=dual_homed,
             mlag_side=mlag_side,
             config=config,
+            host_net=host_net,
+            host_ip=host_ip,
+            host_subnet=host_subnet,
+            host_gateway=host_gateway,
         )
 
     for warning in result.warnings:

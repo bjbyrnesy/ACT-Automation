@@ -327,6 +327,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="With --single-homed: which leaf of the pair (a/1=odd, b/2=even)",
     )
+    attach.add_argument(
+        "--host-net",
+        action="store_true",
+        help="Assign data-plane IP (see HOST_NET_*)",
+    )
+    attach.add_argument(
+        "--host-ip", default=None, help="Optional IPv4; else auto from subnet"
+    )
+    attach.add_argument(
+        "--host-subnet", default=None, help="Override lab HOST_NET_SUBNET"
+    )
+    attach.add_argument(
+        "--host-gateway", default=None, help="Override lab HOST_NET_GATEWAY"
+    )
 
     detach = sub.add_parser(
         "detach",
@@ -720,6 +734,10 @@ def main(argv: list[str] | None = None) -> int:
                 dual_homed=dual_homed,
                 mlag_side=args.mlag_side,
                 project_dir=Path.cwd(),
+                host_net=args.host_net,
+                host_ip=args.host_ip,
+                host_subnet=args.host_subnet,
+                host_gateway=args.host_gateway,
             )
             return 0
         if args.command == "detach":
