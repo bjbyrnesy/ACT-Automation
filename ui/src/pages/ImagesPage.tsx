@@ -14,11 +14,20 @@ import "./ImagesPage.css";
 
 type SettingKey = "CLAB_IMAGE" | "CLAB_HOST_IMAGE";
 
+/** Longest first so `.tar.gz` wins over `.tar`. Bare `.gz` is not allowed. */
+const ARCHIVE_SUFFIXES = [".tar.gz", ".tgz", ".tar", ".xz"] as const;
+
+function allowedArchiveSuffix(filename: string): string {
+  const lowered = filename.toLowerCase();
+  return ARCHIVE_SUFFIXES.find((suffix) => lowered.endsWith(suffix)) ?? "";
+}
+
 function imageRef(row: HostImage): string {
-  const untagged = !row.tag || row.tag === "<none>";
   const unnamed = !row.repository || row.repository === "<none>";
-  if (unnamed) return row.id;
-  return untagged ? row.repository : `${row.repository}:${row.tag}`;
+  // `<none>` is not a tag; `repo` alone would mean `:latest`. Use the id.
+  if (unnamed || row.tag === "<none>") return row.id;
+  if (!row.tag) return row.repository;
+  return `${row.repository}:${row.tag}`;
 }
 
 export function ImagesPage() {
@@ -91,10 +100,21 @@ export function ImagesPage() {
     }
   }
 
-  function onFileChange(selected: File | null) {
+  function onFileChange(selected: File | null, input?: HTMLInputElement) {
     setError("");
-    if (selected && selected.size > IMAGE_UPLOAD_MAX_BYTES) {
+    if (!selected) {
       setFile(null);
+      return;
+    }
+    if (!allowedArchiveSuffix(selected.name)) {
+      setFile(null);
+      if (input) input.value = "";
+      setError("Archive must be .tar, .tar.gz, .tgz, or .xz.");
+      return;
+    }
+    if (selected.size > IMAGE_UPLOAD_MAX_BYTES) {
+      setFile(null);
+      if (input) input.value = "";
       setError("Archive exceeds the 10 GB limit.");
       return;
     }
@@ -118,10 +138,21 @@ export function ImagesPage() {
   function onLoad(event: FormEvent) {
     event.preventDefault();
     if (!file) return;
+    if (!allowedArchiveSuffix(file.name)) {
+      setFile(null);
+      setError("Archive must be .tar, .tar.gz, .tgz, or .xz.");
+      return;
+    }
+    const trimmedName = name.trim();
+    const trimmedTag = tag.trim();
+    if (Boolean(trimmedName) !== Boolean(trimmedTag)) {
+      setError("Name and tag must both be set, or both left empty.");
+      return;
+    }
     void submit(() =>
       loadImageArchive(file, {
-        name: name.trim() || undefined,
-        tag: tag.trim() || undefined,
+        name: trimmedName || undefined,
+        tag: trimmedTag || undefined,
       }),
     );
   }
@@ -203,11 +234,13 @@ export function ImagesPage() {
       <form className="ops-form" onSubmit={onLoad}>
         <h2 className="ops-form__section">Upload &amp; load archive</h2>
         <label>
-          Image archive (.tar, .tar.gz, .tgz; max 10 GB)
+          Image archive (.tar, .tar.gz, .tgz, .xz, .tar.xz; max 10 GB)
           <input
             type="file"
-            accept=".tar,.tar.gz,.tgz,.gz"
-            onChange={(event) => onFileChange(event.target.files?.[0] ?? null)}
+            accept=".tar,.tar.gz,.tgz,.xz,.tar.xz"
+            onChange={(event) =>
+              onFileChange(event.target.files?.[0] ?? null, event.currentTarget)
+            }
           />
         </label>
         <label>
@@ -228,8 +261,8 @@ export function ImagesPage() {
         </label>
         <p className="ops-form__hint">
           The archive is uploaded to ACTA, copied to the lab host, and loaded
-          with the host runtime. Name and tag, when both are set, retag the
-          loaded image.
+          with the host runtime. Set both name and tag to retag the loaded
+          image, or leave both empty.
         </p>
         <div className="ops-form__actions">
           <button type="submit" className="btn-primary" disabled={!file || busy}>

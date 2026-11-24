@@ -1,29 +1,25 @@
-Status: Complete — interactive prompts, secure config cache, capacity banner, topology writing, and CLI create wire-up implemented.
-Commits: 47d0ca0 feat(acta): interactive create prompts and capacity banner
-Tests: 64 passed; banner TDD red/green confirmed; create help, config mode/round-trip, and interactive write smoke passed.
-Checks: Black and Ruff pass for acta plus the changed test; git diff check passes.
-Concerns: Repository-wide Black/Ruff still report pre-existing drift in clab.py and tests/test_clab.py; no Task 6 files are affected.
-Report: /Users/corey/code/ACT-Automation/.superpowers/sdd/task-6-report.md
+# Task 6 report: SPA Settings fields, Images page, nav
 
-Review fix evidence (2026-11-19):
-- Capacity prompts clamp cached defaults to their valid range and re-prompt entries outside it.
-- Maximum spine/leaf counts cannot be lower than current counts or exceed the 16-port cap.
-- Member leaves per selected pair cannot exceed the chosen maximum.
-- `save_config` mode 0o600 and MAX_SPINES/MAX_LEAVES/MAX_MLEAFS_PER_PAIR round-trip are covered with `tmp_path`.
-- `uv run pytest tests/test_create.py tests/test_config.py -v`: 9 passed.
-- Black and Ruff passed for `acta/create.py`, `tests/test_create.py`, and `tests/test_config.py`.
+Status: DONE (commit d3ba467)
 
-Reserved port-budget fix evidence (2026-11-19):
-- Shared create-capacity validation reserves leaf spine-facing, MLAG peer, and
-  member-leaf slots within Ethernet16, plus spine MLAG slots for two-spine plans.
-- Interactive create retries all capacity limits when the shared validator rejects
-  their reserved port budget, preventing emit-only failures.
-- `max_spines=16` with `max_mleafs_per_pair=1` is covered as a rejected plan.
-- `uv run pytest tests/test_capacity.py tests/test_create.py tests/test_portplan.py -q`:
-  18 passed.
-- Black and Ruff passed for all changed Python files.
+## Changes
+- `ui/src/api/client.ts`: extracted `parseJsonResponse`, added `postForm` (no Content-Type, multipart boundary set by browser), `HostImage`, `IMAGE_UPLOAD_MAX_BYTES`, `listImages`, `loadImageArchive` (rejects > 10 GiB client-side), `pushImage`, `pullImage`.
+- `SettingsPage.tsx`: `CLAB_HOST_IMAGE` (containerlab fieldset), new "Image registry" fieldset with `CLAB_REGISTRY`, `CLAB_REGISTRY_USER`, `CLAB_REGISTRY_TOKEN` (password input; server MASK round-trips unchanged like other secrets).
+- `ImagesPage.tsx/.css`: refresh, image table, "Use as CLAB_IMAGE / CLAB_HOST_IMAGE" (PATCH /api/settings), upload+load form, push/pull form rendered only when `CLAB_REGISTRY` non-empty, `JobsDrawer` (list refreshes on close).
+- `LeftNav.tsx` (Images link), `App.tsx` (`/images` route).
 
-Impossible current-count fix evidence (2026-11-19):
-- Current spine/leaf counts are validated against the minimum reserved-port budget
-  before maximum prompts; impossible counts re-prompt instead of entering that loop.
-- A 15-spine current fabric fails fast with a clear `ValueError`.
+## Verification
+- `npm run build` passes. `oxlint`: 0 errors (only pre-existing/similar set-state-in-effect warnings; one new from ImagesPage mount fetch, same pattern as SettingsPage).
+- pre-commit hooks passed. No UI test runner exists; no smoke script added.
+
+## Concerns
+- Not exercised against a live backend/browser.
+- Settings fetch for registry gating is one-shot on mount; changes in Settings take effect on next visit to Images.
+- Row ref uses `repo:tag`. Image id is used when the repository or the tag is `<none>`.
+
+## Review fixes (Important)
+
+- File input `accept` is `.tar,.tar.gz,.tgz,.xz,.tar.xz` (bare `.gz` removed). Label lists `.tar`, `.tar.gz`, `.tgz`, `.xz`, and `.tar.xz`. Client rejects names that do not end with `.tar`, `.tar.gz`, `.tgz`, or `.xz` (case-insensitive, longest suffix first). `.tar.gz` is accepted; bare `.gz` is not. `.tar.xz` matches `.xz`, same as the backend.
+- Upload is rejected when only one of name and tag is set. Hint says both must be set to retag, or both left empty.
+- When the tag is `<none>`, row actions use the image id so a named repo is not sent as `repo` (which would mean `:latest`).
+- `npm run build` (`tsc -b && vite build`) succeeded. `npm run lint` (oxlint) exited 0 with no new errors; existing set-state-in-effect warnings remain, including the ImagesPage mount fetch.
