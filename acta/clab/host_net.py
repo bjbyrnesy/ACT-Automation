@@ -234,6 +234,17 @@ def render_host_net_md(plan: HostNetPlan, *, host: str) -> str:
     )
 
 
+def host_net_artifact_dir(clab_path: Path, host: str) -> Path:
+    """Return the per-host artifact directory next to a containerlab file."""
+    name = clab_path.name
+    stem = clab_path.stem
+    for suffix in (".clab.yml", ".clab.yaml", ".yml", ".yaml"):
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            break
+    return clab_path.parent / f"{stem}.host-net" / host
+
+
 def write_host_net_files(
     dir: Path, host: str, plan: HostNetPlan
 ) -> tuple[Path, Path, Path]:

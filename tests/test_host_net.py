@@ -240,3 +240,57 @@ def test_write_host_net_files(tmp_path: Path):
     assert boot.stat().st_mode & 0o111
     assert "192.168.2.10" in md.read_text()
     assert "HOST_NET_IP" in env.read_text()
+
+
+@pytest.mark.parametrize(
+    ("name", "stem"),
+    [
+        ("demo.clab.yml", "demo"),
+        ("demo.clab.yaml", "demo"),
+        ("demo.yml", "demo"),
+        ("demo.yaml", "demo"),
+        ("demo", "demo"),
+    ],
+)
+def test_host_net_artifact_dir(tmp_path: Path, name: str, stem: str):
+    assert hn.host_net_artifact_dir(tmp_path / name, "h1") == (
+        tmp_path / f"{stem}.host-net" / "h1"
+    )
+
+
+def test_linux_jumphost_node_without_host_net_unchanged():
+    from acta.clab.support import linux_jumphost_node
+
+    node = linux_jumphost_node("img:tag", mgmt_ipv4="172.100.100.10")
+    assert node["exec"] == ["lldpd"]
+    assert "binds" not in node
+    assert "labels" not in node
+
+
+def test_linux_jumphost_node_includes_host_net_binds(tmp_path: Path):
+    from acta.clab.support import linux_jumphost_node
+
+    clab = tmp_path / "lab.clab.yml"
+    clab.write_text("name: lab\n")
+    plan = hn.HostNetPlan("192.168.2.5", "192.168.2.0/24", "192.168.2.1", "eth1", False)
+    d = hn.host_net_artifact_dir(clab, "h1")
+    hn.write_host_net_files(d.parent, "h1", plan)
+    node = linux_jumphost_node(
+        "img:tag", mgmt_ipv4="172.100.100.10", host_net=plan, host_net_dir=d
+    )
+    assert node["labels"]["acta.host-ip"] == "192.168.2.5"
+    assert node["exec"] == ["lldpd", "sh /etc/acta-host-net/bootstrap.sh"]
+    assert node["binds"] == [
+        f"{d}/bootstrap.sh:/etc/acta-host-net/bootstrap.sh:ro",
+        f"{d}/HOST-NET.md:/root/HOST-NET.md:ro",
+        f"{d}/HOST-NET.env:/root/HOST-NET.env:ro",
+    ]
+    assert node["mgmt-ipv4"] == "172.100.100.10"
+
+
+def test_linux_jumphost_node_host_net_requires_dir():
+    from acta.clab.support import linux_jumphost_node
+
+    plan = hn.HostNetPlan("192.168.2.5", "192.168.2.0/24", "192.168.2.1", "eth1", False)
+    with pytest.raises(ValueError, match="host_net_dir"):
+        linux_jumphost_node("img:tag", host_net=plan)
