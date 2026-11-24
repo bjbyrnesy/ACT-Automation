@@ -49,11 +49,12 @@ def _too_large() -> WebError:
 
 
 async def _save_upload(upload: UploadFile, dest: Path) -> int:
-    """Stream ``upload`` to ``dest``, enforcing ``UPLOAD_MAX_BYTES``."""
+    """Stream ``upload`` to ``dest`` (mode 0600), enforcing ``UPLOAD_MAX_BYTES``."""
     total = 0
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
-        with dest.open("wb") as out:
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as out:
             while chunk := await upload.read(1024 * 1024):
                 total += len(chunk)
                 if total > images.UPLOAD_MAX_BYTES:
@@ -67,24 +68,32 @@ async def _save_upload(upload: UploadFile, dest: Path) -> int:
 
 @router.post("/api/jobs/images/load")
 async def load_image(request: Request) -> dict[str, Any]:
-    """Upload an image archive and load it on the lab host as a job."""
+    """Upload an image archive and load it on the lab host as a job.
+
+    ``BodyLimitMiddleware`` enforces the byte cap while the body streams in;
+    the checks here are defence in depth.
+    """
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > images.UPLOAD_MAX_BYTES:
         raise _too_large()
     form = await request.form()
-    upload = form.get("file")
-    if not isinstance(upload, UploadFile):
-        raise WebError(400, "file is required", fields={"file": "required"})
-    name = str(form.get("name") or "").strip() or None
-    tag = str(form.get("tag") or "").strip() or None
-    images.assert_archive_name(upload.filename or "")
-    images.assert_image_name_tag(name, tag)
-    host, runtime = await run_in_threadpool(_host_and_runtime, request)
-    suffix = images.archive_suffix(upload.filename or "")
-    dest = (
-        Path(request.app.state.labs_root) / _UPLOAD_DIR / f"{uuid.uuid4().hex}{suffix}"
-    )
     try:
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise WebError(400, "file is required", fields={"file": "required"})
+        name = str(form.get("name") or "").strip() or None
+        tag = str(form.get("tag") or "").strip() or None
+        images.assert_archive_name(upload.filename or "")
+        images.assert_image_name_tag(name, tag)
+        host, runtime = await run_in_threadpool(_host_and_runtime, request)
+        if host:
+            images.assert_scp_host(host)
+        suffix = images.archive_suffix(upload.filename or "")
+        dest = (
+            Path(request.app.state.labs_root)
+            / _UPLOAD_DIR
+            / f"{uuid.uuid4().hex}{suffix}"
+        )
         await _save_upload(upload, dest)
     finally:
         await form.close()
@@ -97,5 +106,9 @@ async def load_image(request: Request) -> dict[str, Any]:
         finally:
             dest.unlink(missing_ok=True)
 
-    job = submit_job("images.load", run)
+    try:
+        job = submit_job("images.load", run)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
     return {"id": job.id, "kind": job.kind, "status": job.status}

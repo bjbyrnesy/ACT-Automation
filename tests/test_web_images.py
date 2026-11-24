@@ -455,3 +455,252 @@ def test_load_job_deletes_archive_on_failure(monkeypatch, client, tmp_path) -> N
     assert "load failed" in job.log
     assert not seen["archive_path"].exists()  # type: ignore[attr-defined]
     assert seen["archive_path"].name.endswith(".tgz")  # type: ignore[attr-defined]
+
+
+def test_reject_chunked_upload_without_content_length(
+    client, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A chunked body (no Content-Length) is stopped by the byte-counting middleware.
+
+    The cap is shrunk to 10 bytes, the body is sent as a generator (httpx uses
+    ``Transfer-Encoding: chunked``), and ``_save_upload`` is patched to fail the
+    test if reached -- so only the streaming limit can produce the 400.
+    """
+    from acta.web import body_limit, routes_images
+
+    _patch_runtime(monkeypatch)
+    monkeypatch.setattr(routes_images.images, "UPLOAD_MAX_BYTES", 10)
+    monkeypatch.setattr(body_limit, "MULTIPART_OVERHEAD_BYTES", 0)
+
+    async def _boom(*args: object, **kwargs: object) -> int:
+        raise AssertionError("_save_upload reached; limit did not stop the body")
+
+    monkeypatch.setattr(routes_images, "_save_upload", _boom)
+    boundary = "tmpboundary"
+    head = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="ceos.tar"\r\n'
+        "Content-Type: application/x-tar\r\n\r\n"
+    ).encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+
+    def body():  # type: ignore[no-untyped-def]
+        yield head
+        for _ in range(8):
+            yield b"x" * 4096
+        yield tail
+
+    # The app wires the limit as UPLOAD_MAX_BYTES + MULTIPART_OVERHEAD_BYTES,
+    # captured at call time through the lambda; head alone already exceeds 10.
+    r = client.post(
+        "/api/jobs/images/load",
+        content=body(),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    assert r.status_code == 400, r.text
+    assert r.json()["fields"] == {"file": "too large"}
+    assert not list((tmp_path / ".acta-uploads").glob("*"))
+
+
+def test_body_limit_middleware_aborts_mid_stream() -> None:
+    """The limit trips as soon as the cap is crossed, not after the whole body."""
+    import asyncio
+
+    from acta.web.body_limit import BodyLimitMiddleware
+
+    consumed: list[int] = []
+
+    async def app(scope, receive, send):  # type: ignore[no-untyped-def]
+        while True:
+            msg = await receive()
+            consumed.append(len(msg.get("body", b"")))
+            if not msg.get("more_body"):
+                break
+        raise AssertionError("body should have been aborted")
+
+    chunks = [{"type": "http.request", "body": b"x" * 10, "more_body": True}] * 100
+    it = iter(chunks)
+
+    async def receive():  # type: ignore[no-untyped-def]
+        return next(it)
+
+    sent: list[dict] = []
+
+    async def send(msg):  # type: ignore[no-untyped-def]
+        sent.append(msg)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/up",
+        "headers": [],
+    }
+    mw = BodyLimitMiddleware(app, paths=frozenset({"/up"}), limit=lambda: 25)
+    asyncio.run(mw(scope, receive, send))
+    assert consumed == [10, 10]  # third chunk (30 > 25) aborted
+    assert sent[0]["status"] == 400
+
+
+def test_body_limit_middleware_content_length_precheck() -> None:
+    import asyncio
+
+    from acta.web.body_limit import BodyLimitMiddleware
+
+    async def app(scope, receive, send):  # type: ignore[no-untyped-def]
+        raise AssertionError("must not run")
+
+    sent: list[dict] = []
+
+    async def send(msg):  # type: ignore[no-untyped-def]
+        sent.append(msg)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/up",
+        "headers": [(b"content-length", b"100")],
+    }
+    mw = BodyLimitMiddleware(app, paths=frozenset({"/up"}), limit=lambda: 25)
+    asyncio.run(mw(scope, lambda: None, send))  # type: ignore[arg-type,return-value]
+    assert sent[0]["status"] == 400
+
+
+def test_upload_dir_and_file_modes(client, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import stat
+
+    _patch_runtime(monkeypatch)
+    modes: dict[str, int] = {}
+
+    def fake_load(**kwargs: object) -> None:
+        path = kwargs["archive_path"]
+        modes["file"] = stat.S_IMODE(path.stat().st_mode)  # type: ignore[attr-defined]
+        modes["dir"] = stat.S_IMODE(path.parent.stat().st_mode)  # type: ignore[attr-defined]
+
+    monkeypatch.setattr("acta.web.images.load_archive_on_host", fake_load)
+    r = client.post(
+        "/api/jobs/images/load",
+        files={"file": ("ceos.tar", b"x", "application/x-tar")},
+    )
+    _wait_job(r.json()["id"])
+    assert modes == {"file": 0o600, "dir": 0o700}
+
+
+def test_submit_job_failure_removes_upload(client, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import routes_images
+
+    _patch_runtime(monkeypatch)
+
+    def boom(kind, fn):  # type: ignore[no-untyped-def]
+        raise RuntimeError("queue full")
+
+    monkeypatch.setattr(routes_images, "submit_job", boom)
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/api/jobs/images/load",
+            files={"file": ("ceos.tar", b"x", "application/x-tar")},
+        )
+    assert not list((tmp_path / ".acta-uploads").glob("*"))
+
+
+def test_form_closed_on_early_400(client, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from starlette.datastructures import FormData
+
+    closed: list[bool] = []
+    orig = FormData.close
+
+    async def tracking_close(self) -> None:  # type: ignore[no-untyped-def]
+        closed.append(True)
+        await orig(self)
+
+    monkeypatch.setattr(FormData, "close", tracking_close)
+    _patch_runtime(monkeypatch)
+    r = client.post(
+        "/api/jobs/images/load",
+        files={"file": ("evil.exe", b"x", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert closed == [True]
+
+
+def test_scp_rejects_colon_host(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    archive = tmp_path / "a.tar"
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(img.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(img, "host_run", lambda *a: _Proc())
+    for bad in ("host:22", "::1", "-oProxyCommand=x", "a b"):
+        with pytest.raises(WebError) as ei:
+            img.load_archive_on_host(
+                host=bad, runtime="docker", archive_path=archive, name=None, tag=None
+            )
+        assert ei.value.status_code == 400
+    img.assert_scp_host("lab1")
+    img.assert_scp_host("root@lab1.example.com")
+
+
+def test_scp_sets_connect_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    archive = tmp_path / "a.tar"
+    archive.write_bytes(b"x")
+    calls: list[list[str]] = []
+
+    def fake_scp(cmd, **kw):  # type: ignore[no-untyped-def]
+        calls.append(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(img.subprocess, "run", fake_scp)
+    monkeypatch.setattr(img, "host_run", lambda *a: _Proc(stdout="Loaded image: x:1"))
+    img.load_archive_on_host(
+        host="lab1", runtime="docker", archive_path=archive, name=None, tag=None
+    )
+    assert "ConnectTimeout=10" in calls[0]
+
+
+def test_remote_cleanup_failure_does_not_mask_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    archive = tmp_path / "a.tar"
+    archive.write_bytes(b"x")
+    n = {"i": 0}
+
+    def fake_host_run(host, script, args, data):  # type: ignore[no-untyped-def]
+        n["i"] += 1
+        if n["i"] == 1:
+            return _Proc(returncode=1, stderr="load boom")
+        raise OSError("ssh died")
+
+    monkeypatch.setattr(img.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(img, "host_run", fake_host_run)
+    with pytest.raises(WebError) as ei:
+        img.load_archive_on_host(
+            host="lab1", runtime="docker", archive_path=archive, name=None, tag=None
+        )
+    assert "load boom" in ei.value.detail
+    assert "WARNING: failed to remove" in capsys.readouterr().out
+
+
+def test_remote_cleanup_nonzero_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    archive = tmp_path / "a.tar"
+    archive.write_bytes(b"x")
+    n = {"i": 0}
+
+    def fake_host_run(host, script, args, data):  # type: ignore[no-untyped-def]
+        n["i"] += 1
+        if n["i"] == 1:
+            return _Proc(stdout="Loaded image: x:1")
+        return _Proc(returncode=1, stderr="permission denied")
+
+    monkeypatch.setattr(img.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(img, "host_run", fake_host_run)
+    img.load_archive_on_host(
+        host="lab1", runtime="docker", archive_path=archive, name=None, tag=None
+    )
+    assert "permission denied" in capsys.readouterr().out

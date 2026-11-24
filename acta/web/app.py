@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 from acta.capacity import Capacity
 from acta.create import FabricSpec
+from acta.web import body_limit
+from acta.web import images as web_images
 from acta.web.errors import WebError
 from acta.web.jobs import get_job, list_jobs
 from acta.web.labs import (
@@ -188,6 +190,12 @@ def create_app(*, labs_root: Path) -> FastAPI:
             "finished_at": job.finished_at,
         }
 
+    # Cap upload bodies while streaming (not just via Content-Length).
+    app.add_middleware(
+        body_limit.BodyLimitMiddleware,
+        paths=frozenset({"/api/jobs/images/load"}),
+        limit=lambda: web_images.UPLOAD_MAX_BYTES + body_limit.MULTIPART_OVERHEAD_BYTES,
+    )
     app.include_router(images_router)
     app.include_router(ops_router)
     app.include_router(settings_router)

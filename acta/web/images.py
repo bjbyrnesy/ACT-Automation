@@ -115,7 +115,8 @@ def list_host_images(*, host: str | None, runtime: str | None) -> list[dict[str,
     return parse_images_json(result.stdout or "")
 
 
-_HOST_RE = re.compile(r"[A-Za-z0-9_.@:-]+")
+# No ":" -- scp would read it as a host/path separator (or IPv6 literal).
+_HOST_RE = re.compile(r"[A-Za-z0-9_.@-]+")
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _TAG_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}")
 _LOADED_RE = re.compile(r"^Loaded image(?:\(s\)| ID)?:\s*(.+)$", re.MULTILINE)
@@ -169,15 +170,22 @@ def _print_output(result: Any) -> None:
             print(text, flush=True)
 
 
-def _scp_to_host(host: str, archive_path: Path, remote_path: str) -> None:
-    """Copy the archive to ``host`` with scp (never base64 for large files)."""
+def assert_scp_host(host: str) -> None:
+    """Allow SSH aliases and ``user@host``; reject ``:`` and option-like values."""
     if host.startswith("-") or not _HOST_RE.fullmatch(host):
         raise WebError(400, "Invalid SSH host; use an SSH alias or user@hostname.")
+
+
+def _scp_to_host(host: str, archive_path: Path, remote_path: str) -> None:
+    """Copy the archive to ``host`` with scp (never base64 for large files)."""
+    assert_scp_host(host)
     result = subprocess.run(
         [
             "scp",
             "-o",
             "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
             "--",
             str(archive_path),
             f"{host}:{remote_path}",
@@ -189,6 +197,21 @@ def _scp_to_host(host: str, archive_path: Path, remote_path: str) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise WebError(502, detail or "scp failed")
+
+
+def _remove_remote(host: str | None, remote_path: str) -> None:
+    """Best-effort remote cleanup; never raises (must not mask the real error)."""
+    try:
+        result = host_run(host, _RM_SCRIPT, [remote_path], "")
+    except Exception as exc:  # noqa: BLE001 - cleanup must not mask the job error
+        print(f"WARNING: failed to remove {host}:{remote_path}: {exc}", flush=True)
+        return
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        print(
+            f"WARNING: failed to remove {host}:{remote_path}: {detail or 'rm failed'}",
+            flush=True,
+        )
 
 
 def load_archive_on_host(
@@ -235,4 +258,4 @@ def load_archive_on_host(
             print(f"Tagged {refs[0]} as {target}", flush=True)
     finally:
         if remote_path:
-            host_run(host, _RM_SCRIPT, [remote_path], "")
+            _remove_remote(host, remote_path)
