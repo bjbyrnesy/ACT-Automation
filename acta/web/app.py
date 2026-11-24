@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from acta.capacity import Capacity
@@ -200,10 +199,13 @@ def create_app(*, labs_root: Path) -> FastAPI:
     app.include_router(ops_router)
     app.include_router(settings_router)
 
-    # Only mount SPA when a real build is present (avoid catching /api via .gitkeep).
-    if (_STATIC_DIR / "index.html").is_file():
-        # Keep index.html (and SPA HTML fallbacks) uncached so restarts pick up
-        # new hashed asset filenames. Hashed /assets/* can stay cacheable.
+    # SPA: serve built files when present; unknown non-API paths fall back to
+    # index.html so React Router deep links survive a hard refresh.
+    # (StaticFiles html=True only does directory indexes — not SPA fallback.)
+    index_html = _STATIC_DIR / "index.html"
+    if index_html.is_file():
+        static_root = _STATIC_DIR.resolve()
+
         @app.middleware("http")
         async def _spa_html_no_cache(request: Request, call_next):  # type: ignore[no-untyped-def]
             response = await call_next(request)
@@ -212,10 +214,22 @@ def create_app(*, labs_root: Path) -> FastAPI:
                 response.headers["Cache-Control"] = "no-store"
             return response
 
-        app.mount(
-            "/",
-            StaticFiles(directory=_STATIC_DIR, html=True),
-            name="spa",
-        )
+        @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
+        async def spa_or_static(full_path: str) -> Response:
+            if full_path == "api" or full_path.startswith("api/"):
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
+            if full_path:
+                candidate = (static_root / full_path).resolve()
+                try:
+                    candidate.relative_to(static_root)
+                except ValueError:
+                    return JSONResponse({"detail": "Not Found"}, status_code=404)
+                if candidate.is_file():
+                    return FileResponse(candidate)
+            return FileResponse(
+                index_html,
+                media_type="text/html",
+                headers={"Cache-Control": "no-store"},
+            )
 
     return app

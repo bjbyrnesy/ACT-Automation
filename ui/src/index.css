@@ -18,6 +18,9 @@
   --danger-border: #6b3a3a;
   --danger-bg: #3a2222;
   --ok: #c4c9d2;
+  --log-error: #f07178;
+  --log-warn: #e6c07b;
+  --log-ok: #98c379;
   --diagram-bg: #14161b;
   --nav-width: 220px;
   --topbar-height: 48px;

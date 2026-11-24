@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from acta.web.app import create_app
@@ -29,8 +30,8 @@ def test_web_error_handler_returns_json(tmp_path: Path) -> None:
     def _boom() -> None:
         raise WebError(400, "bad input", fields={"name": "required"})
 
-    # create_app may mount SPA StaticFiles at "/"; a route registered after
-    # that mount is shadowed. Prefer the API probe over the catch-all.
+    # create_app may register an SPA catch-all; a route registered after that
+    # is shadowed. Prefer the API probe over the catch-all.
     boom_route = app.router.routes.pop()
     app.router.routes.insert(0, boom_route)
 
@@ -40,6 +41,33 @@ def test_web_error_handler_returns_json(tmp_path: Path) -> None:
     body = response.json()
     assert body["detail"] == "bad input"
     assert body["fields"] == {"name": "required"}
+
+
+def test_spa_deep_link_falls_back_to_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import acta.web.app as web_app
+
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text(
+        "<!doctype html><title>spa</title>", encoding="utf-8"
+    )
+    (static / "asset.txt").write_text("hi", encoding="utf-8")
+    monkeypatch.setattr(web_app, "_STATIC_DIR", static)
+
+    client = TestClient(web_app.create_app(labs_root=tmp_path / "labs"))
+    deep = client.get("/labs/campus/deploy")
+    assert deep.status_code == 200
+    assert "spa" in deep.text
+    assert deep.headers.get("cache-control") == "no-store"
+
+    asset = client.get("/asset.txt")
+    assert asset.status_code == 200
+    assert asset.text == "hi"
+
+    missing_api = client.get("/api/does-not-exist-xyz")
+    assert missing_api.status_code == 404
 
 
 def _preview_payload() -> dict:
