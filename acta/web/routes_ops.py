@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -35,6 +36,7 @@ class ClabBody(_Body):
     from_act: bool | None = None
     name: str | None = None
     image: str | None = None
+    host_image: str | None = None
     mgmt_network: str | None = None
     mgmt_bridge: str | None = None
     mgmt_subnet: str | None = None
@@ -95,7 +97,7 @@ def _resolve(request: Request, raw: str | None) -> Path:
 
 
 def _clab_opts(request: Request, body: ClabBody) -> dict[str, Any]:
-    """Job options with Web UI settings filling host/runtime when omitted."""
+    """Job options with Web UI settings filling host/runtime/images when omitted."""
     opts = body.options()
     settings = get_settings(Path(request.app.state.labs_root))
     if opts.get("host") is None:
@@ -103,9 +105,21 @@ def _clab_opts(request: Request, body: ClabBody) -> dict[str, Any]:
         if host:
             opts["host"] = host
     if opts.get("runtime") is None:
-        runtime = str(settings.get("CLAB_RUNTIME") or "").strip().lower()
+        runtime = (
+            str(settings.get("CLAB_RUNTIME") or os.environ.get("CLAB_RUNTIME") or "")
+            .strip()
+            .lower()
+        )
         if runtime in _RUNTIMES:
             opts["runtime"] = runtime
+    if opts.get("image") is None:
+        image = str(settings.get("CLAB_IMAGE") or "").strip()
+        if image:
+            opts["image"] = image
+    if opts.get("host_image") is None:
+        host_image = str(settings.get("CLAB_HOST_IMAGE") or "").strip()
+        if host_image:
+            opts["host_image"] = host_image
     return opts
 
 
