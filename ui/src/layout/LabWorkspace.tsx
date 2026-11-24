@@ -45,6 +45,7 @@ export function LabWorkspace() {
             name: topo.name ?? version.name,
             labId,
             yamlText: topo.yaml_text ?? "",
+            mgmtIps: topo.mgmt_ips ?? null,
             pngBase64: null,
             isDraft: false,
           });
@@ -80,6 +81,7 @@ export function LabWorkspace() {
         name: topo.name ?? filename,
         labId,
         yamlText: topo.yaml_text ?? "",
+        mgmtIps: topo.mgmt_ips ?? null,
         pngBase64: null,
         isDraft: false,
       });

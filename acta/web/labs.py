@@ -108,11 +108,16 @@ def read_topology(root: Path, name: str) -> dict:
         raise WebError(400, "Invalid topology name")
     if not path.is_file():
         raise WebError(404, "Topology not found")
+    yaml_text = path.read_text(encoding="utf-8")
+    # Prefer sibling .clab.yml / live inspect over ACT's placeholder 192.168.0.0/24.
+    from acta.show_topo import collect_mgmt_ips
+
     return {
-        "yaml_text": path.read_text(encoding="utf-8"),
+        "yaml_text": yaml_text,
         "path": str(path),
         "name": path.name,
         "lab_id": lab_id_from_filename(path.name),
+        "mgmt_ips": collect_mgmt_ips(path, yaml_text),
     }
 
 

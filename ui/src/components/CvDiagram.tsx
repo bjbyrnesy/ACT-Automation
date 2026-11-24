@@ -8,6 +8,7 @@ import "./CvDiagram.css";
 
 type Props = {
   yamlText: string;
+  mgmtIps?: Record<string, string> | null;
   emptyLabel?: string;
 };
 
@@ -55,12 +56,13 @@ function HostTux({ x, y }: { x: number; y: number }) {
 
 export function CvDiagram({
   yamlText,
+  mgmtIps = null,
   emptyLabel = "No topology to draw.",
 }: Props) {
   const layout = useMemo(() => {
-    const graph = parseTopologyGraph(yamlText);
+    const graph = parseTopologyGraph(yamlText, { mgmtIps });
     return graph ? layoutCvDiagram(graph) : null;
-  }, [yamlText]);
+  }, [yamlText, mgmtIps]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -108,7 +110,7 @@ export function CvDiagram({
     setFitZoom(1);
     setLoupeOn(false);
     setLoupePos(null);
-  }, [yamlText]);
+  }, [yamlText, mgmtIps]);
 
   useEffect(() => {
     if (!layout) return;

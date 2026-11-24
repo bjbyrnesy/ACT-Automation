@@ -21,14 +21,29 @@ class ResolvedNode:
 
 
 def _which_runtime(preferred: str | None) -> str:
-    order = [preferred, "podman", "docker"] if preferred else ["podman", "docker"]
-    seen: set[str] = set()
-    for name in order:
-        if not name or name in seen:
+    """Return a runtime binary name that exists on PATH.
+
+    Explicit ``preferred`` wins when installed. Otherwise prefer a runtime that
+    can successfully ``ps`` (podman first, then docker). If both are installed
+    but neither answers ``ps``, prefer docker — a broken/stub podman is the
+    common failure mode on docker-only lab VMs.
+    """
+    if preferred in {"docker", "podman"}:
+        if shutil.which(preferred):
+            return preferred
+        raise FileNotFoundError(f"{preferred} not found on PATH")
+    for name in ("podman", "docker"):
+        if not shutil.which(name):
             continue
-        seen.add(name)
-        if shutil.which(name):
-            return name
+        try:
+            list_running_containers(name)
+        except RuntimeError:
+            continue
+        return name
+    if shutil.which("docker"):
+        return "docker"
+    if shutil.which("podman"):
+        return "podman"
     raise FileNotFoundError(
         "neither podman nor docker found on PATH (need one to exec into lab nodes)"
     )
@@ -45,6 +60,21 @@ def list_running_containers(runtime: str) -> list[str]:
         err = (result.stderr or result.stdout or "unknown error").strip()
         raise RuntimeError(f"{runtime} ps failed: {err}")
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _runtimes_to_try(preferred: str | None) -> list[str]:
+    """Ordered runtimes to search for a matching container."""
+    if preferred in {"docker", "podman"}:
+        return [preferred]
+    order: list[str] = []
+    for name in ("podman", "docker"):
+        if shutil.which(name) and name not in order:
+            order.append(name)
+    if not order:
+        raise FileNotFoundError(
+            "neither podman nor docker found on PATH (need one to exec into lab nodes)"
+        )
+    return order
 
 
 def resolve_container_name(target: str, running: list[str]) -> str:
@@ -102,11 +132,38 @@ def resolve_node(
     *,
     runtime: str | None = None,
 ) -> ResolvedNode:
-    chosen = _which_runtime(runtime)
-    running = list_running_containers(chosen)
-    container = resolve_container_name(target, running)
-    kind = detect_kind(chosen, container)
-    return ResolvedNode(container=container, kind=kind, runtime=chosen)
+    """Resolve ``target`` to a running container, preferring the runtime that has it.
+
+    On hosts with both podman and docker, podman may be empty while the lab runs
+    under docker (acta-docker). Search every available runtime and pick the one
+    that uniquely matches ``target``.
+    """
+    last_error: Exception | None = None
+    empty_runtimes: list[str] = []
+    for chosen in _runtimes_to_try(runtime):
+        try:
+            running = list_running_containers(chosen)
+        except RuntimeError as exc:
+            last_error = exc
+            continue
+        if not running:
+            empty_runtimes.append(chosen)
+            continue
+        try:
+            container = resolve_container_name(target, running)
+        except LookupError as exc:
+            last_error = exc
+            continue
+        kind = detect_kind(chosen, container)
+        return ResolvedNode(container=container, kind=kind, runtime=chosen)
+    if last_error is not None:
+        raise last_error
+    tried = ", ".join(_runtimes_to_try(runtime))
+    empty = ", ".join(empty_runtimes) or "(none)"
+    raise LookupError(
+        f"no running container matching {target!r}; "
+        f"tried runtimes: {tried}; empty: {empty}"
+    )
 
 
 def build_exec_argv(
