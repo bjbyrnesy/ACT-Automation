@@ -120,3 +120,32 @@ def test_http_get_and_patch_round_trip(tmp_path: Path) -> None:
     assert stored["ACT_API_KEY"] == "secret"
     assert stored["PREVIEW_AUTO"] == "true"
     assert stored["PREVIEW_DEBOUNCE_MS"] == "500"
+
+
+def test_patch_registry_settings_masks_token(tmp_path: Path):
+    from acta.web.settings_api import MASK, get_settings, patch_settings
+
+    patched = patch_settings(
+        tmp_path,
+        {
+            "CLAB_REGISTRY": "hub.freeblizz.com/acta",
+            "CLAB_REGISTRY_USER": "acta",
+            "CLAB_REGISTRY_TOKEN": "s3cret",
+            "CLAB_HOST_IMAGE": "localhost/acta-host-multitool:v0.10.0-mcast0.2.3",
+        },
+    )
+    assert patched["CLAB_REGISTRY"] == "hub.freeblizz.com/acta"
+    assert patched["CLAB_REGISTRY_USER"] == "acta"
+    assert patched["CLAB_REGISTRY_TOKEN"] == MASK
+    assert patched["CLAB_HOST_IMAGE"].startswith("localhost/acta-host")
+    again = get_settings(tmp_path)
+    assert again["CLAB_REGISTRY_TOKEN"] == MASK
+
+
+def test_patch_registry_token_mask_preserves_secret(tmp_path: Path):
+    from acta.config import load_config
+    from acta.web.settings_api import MASK, config_path, patch_settings
+
+    patch_settings(tmp_path, {"CLAB_REGISTRY_TOKEN": "s3cret"})
+    patch_settings(tmp_path, {"CLAB_REGISTRY_TOKEN": MASK})
+    assert load_config(config_path(tmp_path))["CLAB_REGISTRY_TOKEN"] == "s3cret"
