@@ -146,6 +146,15 @@ def assert_image_name_tag(name: str | None, tag: str | None) -> None:
         raise WebError(400, "invalid image tag", fields={"tag": "invalid"})
 
 
+_IMAGE_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*")
+
+
+def assert_image_ref(image: str) -> None:
+    """Reject empty or option-like image refs before they reach a shell script."""
+    if not image or not _IMAGE_REF_RE.fullmatch(image):
+        raise WebError(400, "invalid image reference", fields={"image": "invalid"})
+
+
 def parse_loaded_refs(output: str) -> list[str]:
     """Extract image refs from ``docker/podman load`` output."""
     refs: list[str] = []
@@ -212,6 +221,130 @@ def _remove_remote(host: str | None, remote_path: str) -> None:
             f"WARNING: failed to remove {host}:{remote_path}: {detail or 'rm failed'}",
             flush=True,
         )
+
+
+# The token arrives on stdin (``host_run`` ``data``) so it works over ssh too
+# and never appears in argv or the environment.
+_LOGIN_SCRIPT = """set -eu
+runtime="$1"
+server="$2"
+user="$3"
+exec "$runtime" login --username "$user" --password-stdin "$server"
+"""
+_PUSH_SCRIPT = """set -eu
+exec "$1" push "$2"
+"""
+_PULL_SCRIPT = """set -eu
+exec "$1" pull "$2"
+"""
+
+
+def _registry_server(registry: str) -> str:
+    """Return the login server (host[:port]) of a registry path."""
+    return registry.strip().rstrip("/").split("/", 1)[0]
+
+
+def _run_step(
+    *,
+    host: str | None,
+    script: str,
+    args: list[str],
+    data: str,
+    label: str,
+    secrets: list[str],
+) -> None:
+    """Run one host script; print redacted output; raise a redacted 502 on failure."""
+    result = host_run(host, script, args, data)
+    for stream in (result.stdout, result.stderr):
+        text = redact_secrets((stream or "").strip(), secrets)
+        if text:
+            print(text, flush=True)
+    if result.returncode != 0:
+        detail = redact_secrets((result.stderr or result.stdout or "").strip(), secrets)
+        raise WebError(502, detail or f"{label} failed")
+
+
+def _registry_login(
+    *,
+    host: str | None,
+    runtime: str,
+    registry: str,
+    user: str,
+    token: str,
+) -> None:
+    """Log in when both ``user`` and ``token`` are set; otherwise rely on existing auth."""
+    if not (user and token):
+        return
+    server = _registry_server(registry)
+    print(f"{runtime} login {server}", flush=True)
+    _run_step(
+        host=host,
+        script=_LOGIN_SCRIPT,
+        args=[runtime, server, user],
+        data=token,
+        label=f"{runtime} login",
+        secrets=[token],
+    )
+
+
+def push_image(
+    *,
+    host: str | None,
+    runtime: str,
+    image: str,
+    registry: str,
+    user: str,
+    token: str,
+) -> None:
+    """Log in, tag ``image`` into the lab registry, and push it."""
+    ref = registry_image_ref(registry, image)
+    secrets = [token]
+    _registry_login(
+        host=host, runtime=runtime, registry=registry, user=user, token=token
+    )
+    print(f"{runtime} tag {image} {ref}", flush=True)
+    _run_step(
+        host=host,
+        script=_TAG_SCRIPT,
+        args=[runtime, image, ref],
+        data="",
+        label=f"{runtime} tag",
+        secrets=secrets,
+    )
+    print(f"{runtime} push {ref}", flush=True)
+    _run_step(
+        host=host,
+        script=_PUSH_SCRIPT,
+        args=[runtime, ref],
+        data="",
+        label=f"{runtime} push",
+        secrets=secrets,
+    )
+
+
+def pull_image(
+    *,
+    host: str | None,
+    runtime: str,
+    image: str,
+    registry: str,
+    user: str,
+    token: str,
+) -> None:
+    """Log in and pull the registry copy of ``image`` onto the lab host."""
+    ref = registry_image_ref(registry, image)
+    _registry_login(
+        host=host, runtime=runtime, registry=registry, user=user, token=token
+    )
+    print(f"{runtime} pull {ref}", flush=True)
+    _run_step(
+        host=host,
+        script=_PULL_SCRIPT,
+        args=[runtime, ref],
+        data="",
+        label=f"{runtime} pull",
+        secrets=[token],
+    )
 
 
 def load_archive_on_host(

@@ -704,3 +704,172 @@ def test_remote_cleanup_nonzero_warns(
         host="lab1", runtime="docker", archive_path=archive, name=None, tag=None
     )
     assert "permission denied" in capsys.readouterr().out
+
+
+def _save_registry(tmp_path, *, registry="hub.freeblizz.com/acta", token="s3cr3t-tok"):  # type: ignore[no-untyped-def]
+    from acta.web.settings_api import patch_settings
+
+    patch_settings(
+        tmp_path,
+        {
+            "CLAB_REGISTRY": registry,
+            "CLAB_REGISTRY_USER": "robot",
+            "CLAB_REGISTRY_TOKEN": token,
+        },
+    )
+
+
+def test_push_requires_registry(client) -> None:  # type: ignore[no-untyped-def]
+    r = client.post("/api/jobs/images/push", json={"image": "ceos:1"})
+    assert r.status_code == 400
+    assert "CLAB_REGISTRY" in r.text
+
+
+def test_pull_requires_registry(client) -> None:  # type: ignore[no-untyped-def]
+    r = client.post("/api/jobs/images/pull", json={"image": "ceos:1"})
+    assert r.status_code == 400
+
+
+def test_push_requires_image(client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _save_registry(tmp_path)
+    r = client.post("/api/jobs/images/push", json={"image": "  "})
+    assert r.status_code == 400
+    r = client.post("/api/jobs/images/pull", json={})
+    assert r.status_code == 400
+
+
+def test_push_job_redacts_token(monkeypatch, client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _patch_runtime(monkeypatch)
+    _save_registry(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_push(**kwargs: object) -> None:
+        seen.update(kwargs)
+        print(f"pushing with {kwargs['token']}")
+
+    monkeypatch.setattr("acta.web.images.push_image", fake_push)
+    r = client.post("/api/jobs/images/push", json={"image": "ceos:4.37.0F"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "images.push"
+    job = _wait_job(r.json()["id"])
+    assert job.status == "succeeded", job.log
+    assert "s3cr3t-tok" not in job.log
+    assert "pushing with ****" in job.log
+    assert seen["token"] == "s3cr3t-tok"
+    assert seen["registry"] == "hub.freeblizz.com/acta"
+    assert seen["user"] == "robot"
+    assert seen["image"] == "ceos:4.37.0F"
+    assert seen["host"] is None and seen["runtime"] == "docker"
+
+
+def test_pull_job_redacts_token_in_failure(monkeypatch, client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _patch_runtime(monkeypatch)
+    _save_registry(tmp_path)
+
+    def fake_pull(**kwargs: object) -> None:
+        raise RuntimeError(f"denied for {kwargs['token']}")
+
+    monkeypatch.setattr("acta.web.images.pull_image", fake_pull)
+    r = client.post("/api/jobs/images/pull", json={"image": "ceos:1"})
+    assert r.json()["kind"] == "images.pull"
+    job = _wait_job(r.json()["id"])
+    assert job.status == "failed"
+    assert "s3cr3t-tok" not in job.log
+    assert "denied for ****" in job.log
+
+
+def test_push_image_logs_in_tags_and_pushes(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    calls: list[tuple[str | None, list[str], str]] = []
+
+    def fake_host_run(host, script, args, data):  # type: ignore[no-untyped-def]
+        calls.append((host, args, data))
+        return _Proc(stdout="ok s3cr3t-tok\n")
+
+    monkeypatch.setattr(img, "host_run", fake_host_run)
+    img.push_image(
+        host="lab1",
+        runtime="podman",
+        image="localhost/ceos:1",
+        registry="hub.freeblizz.com/acta",
+        user="robot",
+        token="s3cr3t-tok",
+    )
+    ref = "hub.freeblizz.com/acta/ceos:1"
+    assert calls[0] == ("lab1", ["podman", "hub.freeblizz.com", "robot"], "s3cr3t-tok")
+    assert calls[1][1] == ["podman", "localhost/ceos:1", ref]
+    assert calls[2][1] == ["podman", ref]
+    assert all(c[2] == "" for c in calls[1:])
+    # token never appears in args or output
+    assert all("s3cr3t-tok" not in " ".join(c[1]) for c in calls)
+    out = capsys.readouterr().out
+    assert "s3cr3t-tok" not in out and "****" in out
+
+
+def test_pull_image_logs_in_and_pulls(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web import images as img
+
+    calls: list[list[str]] = []
+
+    def fake_host_run(host, script, args, data):  # type: ignore[no-untyped-def]
+        calls.append(args)
+        return _Proc()
+
+    monkeypatch.setattr(img, "host_run", fake_host_run)
+    img.pull_image(
+        host=None,
+        runtime="docker",
+        image="ceos:1",
+        registry="hub.freeblizz.com/acta",
+        user="robot",
+        token="tok",
+    )
+    assert calls == [
+        ["docker", "hub.freeblizz.com", "robot"],
+        ["docker", "hub.freeblizz.com/acta/ceos:1"],
+    ]
+
+
+def test_pull_image_skips_login_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from acta.web import images as img
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(img, "host_run", lambda h, s, a, d: calls.append(a) or _Proc())
+    img.pull_image(
+        host=None, runtime="docker", image="ceos:1", registry="r.io", user="", token=""
+    )
+    assert calls == [["docker", "r.io/ceos:1"]]
+
+
+def test_push_image_failure_redacts_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web import images as img
+
+    monkeypatch.setattr(
+        img,
+        "host_run",
+        lambda h, s, a, d: _Proc(returncode=1, stderr="bad login s3cr3t-tok"),
+    )
+    with pytest.raises(WebError) as ei:
+        img.push_image(
+            host=None,
+            runtime="docker",
+            image="ceos:1",
+            registry="r.io",
+            user="robot",
+            token="s3cr3t-tok",
+        )
+    assert ei.value.status_code == 502
+    assert "s3cr3t-tok" not in ei.value.detail
+    assert "s3cr3t-tok" not in str(ei.value)
+    assert "bad login ****" in ei.value.detail
+
+
+def test_push_rejects_option_like_image(client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _save_registry(tmp_path)
+    r = client.post("/api/jobs/images/push", json={"image": "--all-tags"})
+    assert r.status_code == 400

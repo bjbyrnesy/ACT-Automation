@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import uuid
 from pathlib import Path
@@ -11,10 +13,11 @@ from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
+from acta.config import load_config
 from acta.web import images
 from acta.web.errors import WebError
 from acta.web.jobs import submit_job
-from acta.web.settings_api import get_settings
+from acta.web.settings_api import config_path, get_settings
 
 router = APIRouter()
 
@@ -42,6 +45,65 @@ def get_images(request: Request) -> dict[str, Any]:
     host, runtime = _host_and_runtime(request)
     rows = images.list_host_images(host=host, runtime=runtime)
     return {"images": rows, "runtime": runtime, "host": host or ""}
+
+
+def _registry_job(request: Request, body: Any, kind: str) -> dict[str, Any]:
+    """Validate ``body`` and submit a registry push/pull job (``kind`` push|pull)."""
+    image = str(body.get("image") or "").strip() if isinstance(body, dict) else ""
+    if not image:
+        raise WebError(400, "image is required", fields={"image": "required"})
+    images.assert_image_ref(image)
+    labs_root = Path(request.app.state.labs_root)
+    raw = load_config(config_path(labs_root))
+    registry = raw.get("CLAB_REGISTRY", "").strip()
+    if not registry:
+        raise WebError(
+            400, "CLAB_REGISTRY is not set", fields={"CLAB_REGISTRY": "required"}
+        )
+    user = raw.get("CLAB_REGISTRY_USER", "").strip()
+    token = raw.get("CLAB_REGISTRY_TOKEN", "")
+    # Fail fast on a bad ref instead of inside the job.
+    images.registry_image_ref(registry, image)
+    host, runtime = _host_and_runtime(request)
+    action = images.push_image if kind == "push" else images.pull_image
+    secrets = [token]
+
+    def run() -> None:
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                action(
+                    host=host,
+                    runtime=runtime,
+                    image=image,
+                    registry=registry,
+                    user=user,
+                    token=token,
+                )
+        except WebError as exc:
+            print(images.redact_secrets(buf.getvalue(), secrets), end="")
+            raise WebError(
+                exc.status_code, images.redact_secrets(exc.detail, secrets)
+            ) from None
+        except Exception as exc:  # noqa: BLE001 - job log must never carry the token
+            print(images.redact_secrets(buf.getvalue(), secrets), end="")
+            raise RuntimeError(images.redact_secrets(str(exc), secrets)) from None
+        print(images.redact_secrets(buf.getvalue(), secrets), end="")
+
+    job = submit_job(f"images.{kind}", run)
+    return {"id": job.id, "kind": job.kind, "status": job.status}
+
+
+@router.post("/api/jobs/images/push")
+def push_image_job(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """Tag and push a lab-host image to the configured registry as a job."""
+    return _registry_job(request, body, "push")
+
+
+@router.post("/api/jobs/images/pull")
+def pull_image_job(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """Pull an image from the configured registry onto the lab host as a job."""
+    return _registry_job(request, body, "pull")
 
 
 def _too_large() -> WebError:
