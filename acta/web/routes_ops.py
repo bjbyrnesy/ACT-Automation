@@ -1,4 +1,4 @@
-"""FastAPI routes for ops jobs (clab / ACT) and sync extend / attach."""
+"""FastAPI routes for ops jobs (clab / ACT) and sync extend / attach / detach."""
 
 from __future__ import annotations
 
@@ -80,6 +80,12 @@ class AttachBody(_Body):
     mlag_pair: int | None = None
     mleaf: int | None = None
     et: int | None = None
+    dual_homed: bool | None = None
+    mlag_side: str | None = None
+
+
+class DetachBody(_Body):
+    host: str | None = None
 
 
 def _resolve(request: Request, raw: str | None) -> Path:
@@ -105,6 +111,7 @@ def _clab_opts(request: Request, body: ClabBody) -> dict[str, Any]:
         if host:
             opts["host"] = host
     if opts.get("runtime") is None:
+        # Settings file, then process env (e.g. systemd Environment=CLAB_RUNTIME).
         runtime = (
             str(settings.get("CLAB_RUNTIME") or os.environ.get("CLAB_RUNTIME") or "")
             .strip()
@@ -198,3 +205,9 @@ def extend(body: ExtendBody, request: Request) -> dict[str, str]:
 def attach(body: AttachBody, request: Request) -> dict[str, str]:
     path, opts = _resolve(request, body.path), body.options()
     return _sync(lambda: ops.op_attach(path, **opts))
+
+
+@router.post("/api/detach")
+def detach(body: DetachBody, request: Request) -> dict[str, str]:
+    path, opts = _resolve(request, body.path), body.options()
+    return _sync(lambda: ops.op_detach(path, **opts))

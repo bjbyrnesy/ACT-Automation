@@ -134,9 +134,27 @@ export type AttachMleaf = {
   label: string;
 };
 
+export type AttachSpine = {
+  name: string;
+  site: string | null;
+  label: string;
+};
+
+export type AttachSpinePair = {
+  index: number;
+  spine_a: string;
+  spine_b: string;
+  site: string | null;
+  label: string;
+};
+
 export type AttachTargets = {
   mlag_pairs: AttachMlagPair[];
   mleafs: AttachMleaf[];
+  spines: AttachSpine[];
+  spine_pairs: AttachSpinePair[];
+  hosts: string[];
+  use_case?: string | null;
 };
 
 export function extendTopology(body: Record<string, unknown>) {
@@ -145,6 +163,10 @@ export function extendTopology(body: Record<string, unknown>) {
 
 export function attachTopology(body: Record<string, unknown>) {
   return postJson<SavedTopology>("/api/attach", body);
+}
+
+export function detachTopology(body: Record<string, unknown>) {
+  return postJson<SavedTopology>("/api/detach", body);
 }
 
 export function listLabs() {

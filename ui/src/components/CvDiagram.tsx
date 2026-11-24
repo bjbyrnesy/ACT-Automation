@@ -484,24 +484,30 @@ function SvgCanvas({
                 y={node.y - HOST_TUX_HANG}
               />
             ) : null}
-            {node.ports.map((port) => (
-              <g key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}>
-                <rect
-                  x={port.x}
-                  y={port.y}
-                  width={22}
-                  height={14}
-                  className={`cv-diagram__port cv-diagram__port--${port.kind}`}
-                />
-                <text
-                  x={port.x + 11}
-                  y={port.y + 11}
-                  className={`cv-diagram__port-label cv-diagram__port-label--${port.kind}`}
+            {node.ports.map((port) => {
+              const pw = port.w ?? 22;
+              const ph = port.h ?? 14;
+              return (
+                <g
+                  key={`${node.name}-${port.side}-${port.port}-${port.peerName}`}
                 >
-                  {port.port}
-                </text>
-              </g>
-            ))}
+                  <rect
+                    x={port.x}
+                    y={port.y}
+                    width={pw}
+                    height={ph}
+                    className={`cv-diagram__port cv-diagram__port--${port.kind}`}
+                  />
+                  <text
+                    x={port.x + pw / 2}
+                    y={port.y + ph - 3}
+                    className={`cv-diagram__port-label cv-diagram__port-label--${port.kind}`}
+                  >
+                    {port.port}
+                  </text>
+                </g>
+              );
+            })}
           </g>
         );
       })}

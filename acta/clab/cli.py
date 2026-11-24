@@ -1,6 +1,7 @@
 """Argument parser for the legacy containerlab entry point."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -163,7 +164,11 @@ def main(argv=None):
             default=config.get("CLAB_HOST") or None,
             help="SSH alias or user@host (default: CLAB_HOST from .config; omit to run locally)",
         )
-        configured_runtime = (config.get("CLAB_RUNTIME") or "").strip().lower()
+        configured_runtime = (
+            (config.get("CLAB_RUNTIME") or os.environ.get("CLAB_RUNTIME") or "")
+            .strip()
+            .lower()
+        )
         if configured_runtime not in {"docker", "podman"}:
             configured_runtime = ""
         action.add_argument(
@@ -171,8 +176,8 @@ def main(argv=None):
             choices=("docker", "podman"),
             default=configured_runtime or None,
             help=(
-                "Container runtime (default: CLAB_RUNTIME from .config, else "
-                "auto-detect on the lab host — podman if available, else docker)"
+                "Container runtime (default: CLAB_RUNTIME from .config or env, "
+                "else auto-detect on the lab host — podman if available, else docker)"
             ),
         )
         action.add_argument(

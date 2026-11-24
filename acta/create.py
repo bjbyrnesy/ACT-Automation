@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 
@@ -91,6 +91,10 @@ def _validate_spec(spec: FabricSpec) -> None:
         raise ValueError(
             "L3LS fabrics do not use spine MLAG peer links "
             "(spines stay independent; leaf MLAG is unchanged)"
+        )
+    if mode in {"l2ls", "l2"} and spec.capacity.spines == 2 and not spec.spine_mlag:
+        raise ValueError(
+            "L2LS fabrics with two spines always use spine MLAG peer links"
         )
     if spec.member_leaf_pairs and not spec.mlag_pairs:
         raise ValueError("member leaves require leaf MLAG")
@@ -437,8 +441,34 @@ def _backbone_link_lines(
     return lines
 
 
+def normalize_spine_mlag(spec: FabricSpec) -> FabricSpec:
+    """Apply fabric-mode spine-MLAG rules.
+
+    L2LS with exactly two spines always peers; L3LS spines never do.
+    Legacy ``fabric_mode=None`` keeps the caller's ``spine_mlag`` flag.
+    """
+    mode = spec.capacity.fabric_mode
+    if mode in {"l3ls", "l3"}:
+        if spec.spine_mlag:
+            raise ValueError(
+                "L3LS fabrics do not use spine MLAG peer links "
+                "(spines stay independent; leaf MLAG is unchanged)"
+            )
+        return spec
+    if mode in {"l2ls", "l2"}:
+        if spec.capacity.spines == 2:
+            return spec if spec.spine_mlag else replace(spec, spine_mlag=True)
+        if spec.spine_mlag:
+            raise ValueError("spine MLAG requires exactly two spines")
+        return spec
+    if spec.spine_mlag and spec.capacity.spines != 2:
+        raise ValueError("spine MLAG requires exactly two spines")
+    return spec
+
+
 def emit_act_yaml(spec: FabricSpec) -> str:
     """Emit an ACT topology for one data center or a backbone-joined multi-DC."""
+    spec = normalize_spine_mlag(spec)
     _validate_spec(spec)
     plan = PortPlan(spec.capacity)
     sites = _resolved_sites(spec)
@@ -798,14 +828,8 @@ def run_create(
         "Pair leaves into MLAG pairs (y/n)",
         config.get("MLAG_PAIRS", "n").casefold() in {"y", "yes"},
     )
-    # Spine MLAG is an L2LS pattern only. L3LS spines stay independent; asking
-    # here would invite wrong peer links on a routed leaf-spine fabric.
-    spine_mlag = False
-    if fabric_mode in {"l2ls", "l2"} and spines == 2:
-        spine_mlag = _prompt_yes_no(
-            "Add MLAG peer-links between spines (y/n)",
-            default=True,
-        )
+    # L2LS with two spines always peers; L3LS spines never do.
+    spine_mlag = fabric_mode in {"l2ls", "l2"} and spines == 2
 
     member_leaf_pairs: list[int] = []
     member_leaves_per_pair = 0

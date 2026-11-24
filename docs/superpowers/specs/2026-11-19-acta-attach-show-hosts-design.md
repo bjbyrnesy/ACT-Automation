@@ -18,7 +18,8 @@ on by default.
 | Use case | `datacenter` \| `campus` | Host attach allow-list |
 | Fabric mode | `l3ls` \| `l2ls` (legacy `l2` normalized) | Topology shape |
 
-**Attach policy:** DC → leaf/mleaf/border; Campus → those + spine (warn); never bb.
+**Attach policy:** DC → leaf/mleaf/border; Campus → those + spine (intentional
+for small L2LS deployments that burn spine access ports); never bb.
 
 ## Commands
 
@@ -26,8 +27,13 @@ on by default.
 acta.py show TOPOLOGY
 acta.py attach host NAME TOPOLOGY --to SWITCH[:EthernetN]
 acta.py attach host NAME TOPOLOGY --mlag-pair N --et K
+acta.py attach host NAME TOPOLOGY --mlag-pair N --single-homed --mlag-side a
 acta.py attach host NAME TOPOLOGY --mleaf N
+acta.py detach host NAME TOPOLOGY
 ```
+
+`--mlag-pair` defaults to dual-homed (both leaves). `--single-homed` plus
+optional `--mlag-side a|b` attaches to one leaf of the pair.
 
 `show` numbers MLAG pairs (`--mlag-pair`) and member-leaves (`--mleaf`) in
 the same discovery order attach uses.

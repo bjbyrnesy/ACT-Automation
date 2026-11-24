@@ -103,6 +103,12 @@ def _reservation(text: str, switch: str) -> tuple[int, frozenset[int]]:
         return plan.leaf_reserved_top(), plan.leaf_protected_ports()
     if role == "border":
         return plan.border_reserved_top(), plan.border_protected_ports()
+    if role == "spine":
+        multi_dc = any(_node_role(name) == "bb" for name in _list_nodes(text))
+        return (
+            plan.spine_reserved_top(multi_dc),
+            plan.spine_protected_ports(multi_dc),
+        )
     return 0, frozenset()
 
 
@@ -188,8 +194,6 @@ def _validate_switch(
         raise ValueError(
             f"{case} use case forbids attaching hosts to {role} ({switch})"
         )
-    if role == "spine" and (normalize_use_case(use_case) or "datacenter") == "campus":
-        warnings.append(f"campus allows spine attach but it is discouraged ({switch})")
 
 
 def _ensure_generic_block(
@@ -238,6 +242,18 @@ def _append_connection(
     return text + line
 
 
+def _normalize_mlag_side(value: str | None) -> str:
+    """Map side aliases to ``a`` or ``b`` (odd/even leaf of the MLAG pair)."""
+    if value is None or value.strip() == "":
+        return "a"
+    folded = value.strip().casefold()
+    if folded in {"a", "1", "odd", "left"}:
+        return "a"
+    if folded in {"b", "2", "even", "right"}:
+        return "b"
+    raise ValueError("mlag side must be a or b (1/2, odd/even, left/right)")
+
+
 def _resolve_endpoints(
     text: str,
     *,
@@ -246,6 +262,8 @@ def _resolve_endpoints(
     mleaf: int | None,
     et: int | None,
     use_case: str | None,
+    dual_homed: bool = True,
+    mlag_side: str | None = None,
 ) -> tuple[list[AttachEndpoint], list[str]]:
     warnings: list[str] = []
     nodes = _list_nodes(text)
@@ -259,6 +277,10 @@ def _resolve_endpoints(
     )
     if selectors > 1:
         raise ValueError("use only one of --to, --mlag-pair, or --mleaf")
+    if dual_homed is False and mlag_pair is None:
+        raise ValueError("--single-homed only applies with --mlag-pair")
+    if mlag_side is not None and mlag_pair is None:
+        raise ValueError("--mlag-side only applies with --mlag-pair")
 
     if mleaf is not None:
         mleafs = member_leaves(text)
@@ -276,10 +298,15 @@ def _resolve_endpoints(
                 f"(discovered {len(pairs)}; run acta.py show)"
             )
         leaf_a, leaf_b = pairs[mlag_pair - 1]
-        endpoints = [
-            AttachEndpoint(leaf_a, et),
-            AttachEndpoint(leaf_b, et),
-        ]
+        if dual_homed:
+            endpoints = [
+                AttachEndpoint(leaf_a, et),
+                AttachEndpoint(leaf_b, et),
+            ]
+        else:
+            side = _normalize_mlag_side(mlag_side)
+            switch = leaf_a if side == "a" else leaf_b
+            endpoints = [AttachEndpoint(switch, et)]
     else:
         if not to:
             raise ValueError(
@@ -288,6 +315,11 @@ def _resolve_endpoints(
         if len(to) > 2:
             raise ValueError("at most two --to endpoints (single or dual-homed)")
         endpoints = [_parse_endpoint(item) for item in to]
+        if et is not None:
+            endpoints = [
+                AttachEndpoint(ep.switch, ep.port if ep.port is not None else et)
+                for ep in endpoints
+            ]
 
     for endpoint in endpoints:
         _validate_switch(
@@ -304,6 +336,8 @@ def attach_host_act(
     mlag_pair: int | None = None,
     mleaf: int | None = None,
     et: int | None = None,
+    dual_homed: bool = True,
+    mlag_side: str | None = None,
     config: dict[str, str] | None = None,
     sync_sibling: bool = True,
 ) -> AttachResult:
@@ -329,6 +363,8 @@ def attach_host_act(
         mleaf=mleaf,
         et=et,
         use_case=use_case,
+        dual_homed=dual_homed,
+        mlag_side=mlag_side,
     )
 
     cfg = config or {}
@@ -436,6 +472,179 @@ def _host_links_from_act(act_text: str, host: str) -> list[tuple[int, str, int]]
     return host_links(act_text, host)
 
 
+def _remove_host_node_block(text: str, host: str) -> str:
+    """Drop the ``  - host:`` node stanza from an ACT topology."""
+    lines = text.splitlines(keepends=True)
+    start: int | None = None
+    end: int | None = None
+    marker = f"  - {host}:"
+    for index, line in enumerate(lines):
+        if start is None:
+            if line.rstrip("\n") == marker or line.startswith(f"{marker} "):
+                start = index
+            continue
+        # End at the next peer-indented list item or a non-indented section.
+        if line.startswith("  - ") or (line and not line[0].isspace()):
+            end = index
+            break
+    if start is None:
+        raise ValueError(f"node {host!r} not found in topology")
+    if end is None:
+        end = len(lines)
+    del lines[start:end]
+    # Collapse accidental triple blanks left by the cut.
+    cleaned: list[str] = []
+    blank_run = 0
+    for line in lines:
+        if line.strip() == "":
+            blank_run += 1
+            if blank_run > 2:
+                continue
+        else:
+            blank_run = 0
+        cleaned.append(line)
+    return "".join(cleaned)
+
+
+def _remove_host_connections(text: str, host: str) -> str:
+    """Drop every ``connection:`` line that references ``host``."""
+    kept: list[str] = []
+    needle = f"{host}:"
+    for line in text.splitlines(keepends=True):
+        if "connection:" in line and needle in line:
+            continue
+        kept.append(line)
+    return "".join(kept)
+
+
+def remove_host_from_clab(clab_path: Path, host: str) -> None:
+    """Remove a linux host node and its links from an existing .clab.yml."""
+    import yaml
+
+    data = yaml.safe_load(clab_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError(f"invalid clab topology: {clab_path}")
+    topology = data.setdefault("topology", {})
+    nodes = topology.setdefault("nodes", {})
+    clab_links = topology.setdefault("links", [])
+    if not isinstance(nodes, dict) or not isinstance(clab_links, list):
+        raise TypeError(f"invalid clab topology structure: {clab_path}")
+
+    nodes.pop(host, None)
+    kept: list = []
+    for link in clab_links:
+        if not isinstance(link, dict):
+            kept.append(link)
+            continue
+        ends = link.get("endpoints") or []
+        if any(str(end).startswith(f"{host}:") for end in ends):
+            continue
+        kept.append(link)
+    topology["links"] = kept
+
+    try:
+        from acta.clab.generate import yaml_text
+
+        rendered = yaml_text(data)
+        clab_path.write_text(rendered, encoding="utf-8")
+    except OSError, RuntimeError, SystemExit, ValueError:
+        dumped = yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
+        if not dumped.startswith(MARKER.rstrip("\n")):
+            dumped = f"{MARKER}{dumped}"
+        clab_path.write_text(dumped, encoding="utf-8")
+
+
+def detach_host_act(
+    path: Path,
+    host: str,
+    *,
+    sync_sibling: bool = True,
+) -> AttachResult:
+    """Detach a generic host from an ACT topology YAML."""
+    text = path.read_text(encoding="utf-8")
+    if _is_clab_topology(path, text):
+        raise ValueError(
+            f"{path} looks like containerlab YAML; detach the sibling ACT YAML "
+            "or pass it through run_detach"
+        )
+    hosts = attached_hosts(text)
+    if host not in hosts:
+        if host in _list_nodes(text):
+            raise ValueError(
+                f"{host!r} is not an attached generic host "
+                "(only node_type: generic can be detached)"
+            )
+        raise ValueError(f"attached host {host!r} not found in topology")
+
+    links = host_links(text, host)
+    link_descs = tuple(
+        f"{host}:Ethernet{hp} ↔ {switch}:Ethernet{sp}" for hp, switch, sp in links
+    )
+    text = _remove_host_connections(text, host)
+    text = _remove_host_node_block(text, host)
+
+    sibling: Path | None = None
+    if sync_sibling:
+        candidate = _find_sibling_clab(path)
+        if candidate is not None:
+            remove_host_from_clab(candidate, host)
+            sibling = candidate
+        else:
+            print(
+                f"Note: no sibling .clab.yml next to {path.name}; " "ACT updated only.",
+                file=sys.stderr,
+            )
+
+    path.write_text(text, encoding="utf-8")
+    return AttachResult(
+        path=path,
+        host=host,
+        links=link_descs,
+        sibling=sibling,
+        warnings=(),
+    )
+
+
+def run_detach(
+    object_type: str,
+    host: str,
+    topology: Path,
+    *,
+    project_dir: Path | None = None,
+) -> AttachResult:
+    """CLI/Web entry: detach a previously attached host."""
+    _ = project_dir  # parity with run_attach; reserved for future config hooks
+    if object_type != "host":
+        raise ValueError(f"unsupported detach object type: {object_type!r} (v1: host)")
+    if not topology.is_file():
+        raise FileNotFoundError(f"topology not found: {topology}")
+
+    text = topology.read_text(encoding="utf-8")
+    if _is_clab_topology(topology, text):
+        act_sibling = topology.with_name(
+            topology.name.replace(".clab.yml", ".yml").replace(".clab.yaml", ".yaml")
+        )
+        if not act_sibling.is_file() and topology.name.endswith(".clab.yml"):
+            stem = topology.name[: -len(".clab.yml")]
+            act_sibling = topology.with_name(f"{stem}.yml")
+        if act_sibling.is_file():
+            result = detach_host_act(act_sibling, host, sync_sibling=True)
+        else:
+            raise ValueError(
+                f"detaching from {topology.name} without a sibling ACT topology "
+                "is not supported; detach from the ACT YAML instead"
+            )
+    else:
+        result = detach_host_act(topology, host, sync_sibling=True)
+
+    print(f"Detached {result.host} from {result.path.name}")
+    for link in result.links:
+        print(f"  removed {link}")
+    if result.sibling is not None:
+        print(f"Synced {result.sibling.name}")
+    return result
+
+
 def sync_host_into_clab(
     clab_path: Path,
     host: str,
@@ -510,6 +719,8 @@ def attach_host_clab(
     mlag_pair: int | None = None,
     mleaf: int | None = None,
     et: int | None = None,
+    dual_homed: bool = True,
+    mlag_side: str | None = None,
     config: dict[str, str] | None = None,
 ) -> AttachResult:
     """Attach a linux host directly into a .clab.yml (no ACT mutation)."""
@@ -541,6 +752,8 @@ def attach_host_clab(
             mlag_pair=mlag_pair,
             mleaf=mleaf,
             et=et,
+            dual_homed=dual_homed,
+            mlag_side=mlag_side,
             config=config,
             sync_sibling=True,
         )
@@ -560,6 +773,8 @@ def run_attach(
     mlag_pair: int | None = None,
     mleaf: int | None = None,
     et: int | None = None,
+    dual_homed: bool = True,
+    mlag_side: str | None = None,
     project_dir: Path | None = None,
 ) -> AttachResult:
     if object_type != "host":
@@ -582,6 +797,8 @@ def run_attach(
             mlag_pair=mlag_pair,
             mleaf=mleaf,
             et=et,
+            dual_homed=dual_homed,
+            mlag_side=mlag_side,
             config=config,
         )
     else:
@@ -592,6 +809,8 @@ def run_attach(
             mlag_pair=mlag_pair,
             mleaf=mleaf,
             et=et,
+            dual_homed=dual_homed,
+            mlag_side=mlag_side,
             config=config,
         )
 

@@ -362,6 +362,7 @@ Then use the Vite URL printed in the terminal (typically http://127.0.0.1:5173/)
 | `clab onboard` | Running cEOS containers → CVaaS (**arista_ceos** only; skips linux hosts) |
 | `show` | MLAG / mleaf / host tables, SSH probes, Graphviz PNG |
 | `attach host` | Add generic/linux jumphost after the fabric exists |
+| `detach host` | Remove an attached generic host (ACT + sibling `.clab.yml`) |
 | `ssh` | `podman`/`docker exec` into a host (`bash`) or switch (`Cli`) |
 
 ---
@@ -527,14 +528,16 @@ With `--host`, TCP/22 probes and `containerlab inspect` run on that lab host
 to `podman machine ssh` when local probes miss. Prefer `acta.py ssh` (exec)
 over host-routed SSH for a shell.
 
-### `attach host`
+### `attach host` / `detach host`
 
 Create builds the **switch fabric first**. Attach jumphosts afterward:
 
 ```bash
 python acta.py attach host jump1 topology-….yml --to leaf1
 python acta.py attach host jump2 topology-….yml --mlag-pair 1 --et 11
+python acta.py attach host jump2s topology-….yml --mlag-pair 1 --single-homed --mlag-side a
 python acta.py attach host jump3 topology-….yml --mleaf 1
+python acta.py detach host jump2 topology-….yml
 ```
 
 - ACT → `node_type: generic` (default ubuntu / `ansible`/`ansible`).
@@ -543,10 +546,17 @@ python acta.py attach host jump3 topology-….yml --mleaf 1
   `lldpd` on, static `mgmt-ipv4`, no `cmd:` override (keeps dropbear SSH alive).
   Build once on the clab host: `scripts/build-host-image.sh` (default
   `CLAB_HOST_IMAGE=localhost/acta-host-multitool:v0.10.0-mcast0.2.3`).
-- Dual-homed / MLAG without `--et` picks one Ethernet free on **both** peers.
-- Use case policy: datacenter → no spines; campus → spines allowed (warning).
+- `--mlag-pair` defaults to **dual-homed** (both leaves). Pass `--single-homed`
+  (and optional `--mlag-side a|b`) to hang the host off one leaf of the pair.
+- Dual-homed MLAG without `--et` picks one Ethernet free on **both** peers.
+- Use case policy: datacenter → leaf/mleaf/border only; campus → those plus
+  **spines** (common on small L2LS campuses when access ports are scarce).
+- `detach host` removes the generic node and its uplinks from ACT (and the
+  sibling `.clab.yml` when present). Only `node_type: generic` hosts can be
+  detached — fabric switches are left alone.
 
-Then `clab redeploy` (or destroy+deploy) so the running lab picks up new hosts.
+Then `clab redeploy` (or destroy+deploy) so the running lab picks up host
+changes.
 
 ### `ssh`
 
