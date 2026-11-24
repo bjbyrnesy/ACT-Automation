@@ -27,6 +27,8 @@ _EXACT_KEYS = frozenset(
         "CLAB_REGISTRY",
         "CLAB_REGISTRY_USER",
         "CLAB_REGISTRY_TOKEN",
+        "HOST_NET_SUBNET",
+        "HOST_NET_GATEWAY",
         "preview_auto",
         "preview_debounce_ms",
     }
@@ -85,6 +87,8 @@ def get_settings(labs_root: Path) -> dict[str, Any]:
             "CLAB_REGISTRY_TOKEN",
             raw.get("CLAB_REGISTRY_TOKEN"),
         ),
+        "HOST_NET_SUBNET": raw.get("HOST_NET_SUBNET", ""),
+        "HOST_NET_GATEWAY": raw.get("HOST_NET_GATEWAY", ""),
         "preview_auto": _preview_auto(raw),
         "preview_debounce_ms": _preview_debounce_ms(raw),
     }
