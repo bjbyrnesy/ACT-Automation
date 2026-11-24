@@ -19,13 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal,
-  });
+async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const errorBody = payload && typeof payload === "object" ? payload as {
@@ -46,6 +40,22 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
     throw new ApiError(message, response.status, fields);
   }
   return payload as T;
+}
+
+async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  return parseJsonResponse<T>(response);
+}
+
+// No Content-Type header: the browser sets the multipart boundary itself.
+async function postForm<T>(path: string, body: FormData, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, { method: "POST", body, signal });
+  return parseJsonResponse<T>(response);
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -209,4 +219,46 @@ export function previewTopology(body: PreviewBody, signal?: AbortSignal) {
 
 export function writeTopology(body: WriteTopologyBody, signal?: AbortSignal) {
   return postJson<WriteTopologyResult>("/api/topologies", body, signal);
+}
+
+export type HostImage = {
+  repository: string;
+  tag: string;
+  id: string;
+  size: string;
+  created: string;
+};
+
+/** Mirrors the server-side upload cap (10 GiB). */
+export const IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 ** 3;
+
+export function listImages(signal?: AbortSignal) {
+  return getJson<{ images: HostImage[]; runtime: string; host: string }>(
+    "/api/images",
+    signal,
+  );
+}
+
+export function loadImageArchive(
+  file: File,
+  opts: { name?: string; tag?: string } = {},
+) {
+  if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
+    throw new ApiError("Archive exceeds the 10 GB limit", 400, {
+      file: "too large",
+    });
+  }
+  const body = new FormData();
+  body.append("file", file);
+  if (opts.name) body.append("name", opts.name);
+  if (opts.tag) body.append("tag", opts.tag);
+  return postForm<Job>("/api/jobs/images/load", body);
+}
+
+export function pushImage(image: string) {
+  return postJson<Job>("/api/jobs/images/push", { image });
+}
+
+export function pullImage(image: string) {
+  return postJson<Job>("/api/jobs/images/pull", { image });
 }

@@ -1,0 +1,22 @@
+.images-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.images-page__table {
+  margin-top: 12px;
+}
+
+.images-page__mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.images-page__row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
