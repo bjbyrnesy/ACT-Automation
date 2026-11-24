@@ -9,17 +9,25 @@ fail_fast: false
 
 repos:
   # --- secrets / leak prevention (primary local shield) ---
+  # Use gitleaks-system (PATH binary) — language: golang hangs in household
+  # Forgejo runners downloading the Go toolchain / modules.
+  # Local: brew install gitleaks. CI: workflow installs the release tarball.
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:
-      - id: gitleaks
+      - id: gitleaks-system
         name: gitleaks (staged secrets)
+        # Must set explicitly — duplicate hook ids can drop upstream defaults.
+        pass_filenames: false
       # Full scan on push — catches anything that slipped past --no-verify.
-      - id: gitleaks
+      - id: gitleaks-system
         alias: gitleaks-push
         name: gitleaks (pre-push)
         stages: [pre-push]
         entry: gitleaks git --redact --verbose
+        pass_filenames: false
+
+
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
