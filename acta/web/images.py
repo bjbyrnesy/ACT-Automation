@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from acta.clab.support import host_run, resolve_clab_runtime
 from acta.web.errors import WebError
 
 UPLOAD_MAX_BYTES = 10 * 1024**3
@@ -91,3 +92,20 @@ def parse_images_json(raw: str) -> list[dict[str, str]]:
             }
         )
     return out
+
+
+# One JSON object per line works on both docker and podman.
+_LIST_IMAGES_SCRIPT = """set -eu
+runtime="$1"
+exec "$runtime" images --format '{{json .}}'
+"""
+
+
+def list_host_images(*, host: str | None, runtime: str | None) -> list[dict[str, str]]:
+    """List container images on the lab host using its docker/podman runtime."""
+    resolved = resolve_clab_runtime(host, runtime)
+    result = host_run(host, _LIST_IMAGES_SCRIPT, [resolved], "")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise WebError(502, detail or f"{resolved} images failed")
+    return parse_images_json(result.stdout or "")

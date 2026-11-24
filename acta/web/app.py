@@ -25,6 +25,7 @@ from acta.web.labs import (
     write_topology,
 )
 from acta.web.preview import preview_from_spec
+from acta.web.routes_images import router as images_router
 from acta.web.routes_ops import router as ops_router
 from acta.web.routes_settings import router as settings_router
 
@@ -187,6 +188,7 @@ def create_app(*, labs_root: Path) -> FastAPI:
             "finished_at": job.finished_at,
         }
 
+    app.include_router(images_router)
     app.include_router(ops_router)
     app.include_router(settings_router)
 
