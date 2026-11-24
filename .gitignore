@@ -135,3 +135,6 @@ ACT Automation.code-workspace
 
 # Web UI image uploads
 .acta-uploads/
+
+# Subagent-driven-dev scratch
+.superpowers/
