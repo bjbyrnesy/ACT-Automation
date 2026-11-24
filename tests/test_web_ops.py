@@ -263,6 +263,33 @@ def test_route_deploy_uses_settings_runtime(
     assert seen["from_act"] is True
 
 
+def test_route_generate_uses_settings_images(
+    client: TestClient, act_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Labs .config CLAB_IMAGE / CLAB_HOST_IMAGE must reach generate, not cwd .config."""
+    from acta.config import save_config
+
+    save_config(
+        tmp_path / ".config",
+        {
+            "CLAB_IMAGE": "hub.freeblizz.com/ceosimage:4.37.0F",
+            "CLAB_HOST_IMAGE": "localhost/acta-host-multitool:v0.10.0-mcast0.2.3",
+        },
+    )
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ops, "op_clab_generate", lambda path, **kw: seen.update(path=path, **kw) or path
+    )
+    response = client.post(
+        "/api/jobs/clab/generate",
+        json={"path": act_file.name, "from_act": True},
+    )
+    assert response.status_code == 200
+    assert _wait(response.json()["id"]).status == "succeeded"
+    assert seen["image"] == "hub.freeblizz.com/ceosimage:4.37.0F"
+    assert seen["host_image"] == "localhost/acta-host-multitool:v0.10.0-mcast0.2.3"
+
+
 def test_op_clab_deploy_passes_none_runtime_through(
     act_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
