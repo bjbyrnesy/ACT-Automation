@@ -332,6 +332,14 @@ def test_l3ls_rejects_spine_mlag():
         emit_act_yaml(_multi_dc_spec("l3ls", spine_mlag=True))
 
 
+def test_l2ls_forces_spine_mlag_for_dual_spines():
+    # Callers may omit spine_mlag; L2LS with two spines always peers.
+    text = emit_act_yaml(_multi_dc_spec("l2ls", spine_mlag=False))
+    links = _endpoints(text)
+    assert ("demo-A-spine1", 9, "demo-A-spine2", 9) in links
+    assert ("demo-A-spine1", 10, "demo-A-spine2", 10) in links
+
+
 def test_multi_dc_l2_has_spine_uplinks_and_no_borders():
     text = emit_act_yaml(_multi_dc_spec("l2ls"))
     assert "-border" not in text

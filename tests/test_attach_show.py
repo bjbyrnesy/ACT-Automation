@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from acta.attach import attach_host_act, attached_hosts, run_attach
+from acta.attach import (
+    attach_host_act,
+    attached_hosts,
+    detach_host_act,
+    run_attach,
+    run_detach,
+)
 from acta.capacity import Capacity, host_attach_roles, parse_capacity_header
 from acta.create import FabricSpec, emit_act_yaml
 from acta.extend import leaf_mlag_pairs, member_leaves
@@ -86,6 +92,76 @@ def test_attach_single_host_to_leaf(tmp_path: Path):
     assert result.host == "demo-host1"
     cap = parse_capacity_header(text)
     assert cap.use_case == "datacenter"
+
+
+def test_detach_host_removes_node_and_links(tmp_path: Path):
+    path = _topo(tmp_path)
+    attach_host_act(
+        path,
+        "jump1",
+        to=["demo-leaf1:Ethernet10"],
+        sync_sibling=False,
+    )
+    attach_host_act(
+        path,
+        "jump2",
+        to=["demo-leaf2:Ethernet10"],
+        sync_sibling=False,
+    )
+    result = detach_host_act(path, "jump1", sync_sibling=False)
+    text = path.read_text(encoding="utf-8")
+    assert result.host == "jump1"
+    assert attached_hosts(text) == ["jump2"]
+    assert "jump1:" not in text
+    assert "jump1:Ethernet" not in text
+    assert "jump2:Ethernet1, demo-leaf2:Ethernet10" in text
+    assert "demo-leaf1:" in text
+
+
+def test_detach_rejects_fabric_switch(tmp_path: Path):
+    path = _topo(tmp_path)
+    with pytest.raises(ValueError, match="not an attached generic host"):
+        detach_host_act(path, "demo-leaf1", sync_sibling=False)
+
+
+def test_detach_syncs_sibling_clab(tmp_path: Path):
+    from acta.attach import sync_host_into_clab
+    from acta.clab.support import MARKER
+
+    act = _topo(tmp_path)
+    attach_host_act(
+        act,
+        "jump1",
+        to=["demo-leaf1:Ethernet10"],
+        sync_sibling=False,
+    )
+    clab = tmp_path / "topology-demo.clab.yml"
+    clab.write_text(
+        MARKER
+        + "name: demo\n"
+        + "mgmt:\n"
+        + "  ipv4-subnet: 172.100.100.0/22\n"
+        + "topology:\n"
+        + "  nodes:\n"
+        + "    demo-leaf1:\n"
+        + "      kind: arista_ceos\n"
+        + "      mgmt-ipv4: 172.100.100.2\n"
+        + "  links: []\n",
+        encoding="utf-8",
+    )
+    sync_host_into_clab(
+        clab,
+        "jump1",
+        act_text=act.read_text(encoding="utf-8"),
+        image="localhost/acta-host:test",
+    )
+    assert "jump1:" in clab.read_text(encoding="utf-8")
+
+    result = run_detach("host", "jump1", act)
+    assert result.sibling == clab
+    clab_text = clab.read_text(encoding="utf-8")
+    assert "jump1:" not in clab_text
+    assert "jump1:" not in act.read_text(encoding="utf-8")
 
 
 def test_sync_host_into_clab_enables_lldp(tmp_path: Path):
@@ -290,6 +366,40 @@ def test_attach_mlag_pair(tmp_path: Path):
     assert len(result.links) == 2
 
 
+def test_attach_mlag_pair_single_homed_side_a(tmp_path: Path):
+    path = _topo(tmp_path)
+    result = attach_host_act(
+        path,
+        "demo-host-single",
+        mlag_pair=1,
+        et=11,
+        dual_homed=False,
+        mlag_side="a",
+        sync_sibling=False,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert len(result.links) == 1
+    assert "demo-host-single:Ethernet1, demo-leaf1:Ethernet11" in text
+    assert "demo-leaf2:Ethernet11" not in text
+
+
+def test_attach_mlag_pair_single_homed_side_b(tmp_path: Path):
+    path = _topo(tmp_path)
+    result = attach_host_act(
+        path,
+        "demo-host-single-b",
+        mlag_pair=1,
+        et=12,
+        dual_homed=False,
+        mlag_side="b",
+        sync_sibling=False,
+    )
+    text = path.read_text(encoding="utf-8")
+    assert len(result.links) == 1
+    assert "demo-host-single-b:Ethernet1, demo-leaf2:Ethernet12" in text
+    assert "demo-leaf1:Ethernet12" not in text
+
+
 def test_attach_mlag_pair_without_et_uses_same_port(tmp_path: Path):
     from acta.attach import _next_free_port
 
@@ -350,9 +460,7 @@ def test_attach_rejects_spine_on_datacenter(tmp_path: Path):
         )
 
 
-def test_attach_spine_warns_on_campus(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
+def test_attach_spine_allowed_on_campus(tmp_path: Path):
     path = _topo(tmp_path, use_case="campus")
     run_attach(
         "host",
@@ -361,9 +469,22 @@ def test_attach_spine_warns_on_campus(
         to=["demo-spine1:Ethernet14"],
         project_dir=tmp_path,
     )
-    err = capsys.readouterr().err
-    assert "discouraged" in err
-    assert "demo-host4" in path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "demo-host4:Ethernet1, demo-spine1:Ethernet14" in text
+
+
+def test_attach_spine_dual_homed_on_campus(tmp_path: Path):
+    path = _topo(tmp_path, use_case="campus")
+    result = attach_host_act(
+        path,
+        "demo-host-spine-dual",
+        to=["demo-spine1", "demo-spine2"],
+        sync_sibling=False,
+    )
+    assert len(result.links) == 2
+    text = path.read_text(encoding="utf-8")
+    assert "demo-spine1:Ethernet" in text
+    assert "demo-spine2:Ethernet" in text
 
 
 def test_show_runs(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
@@ -439,7 +560,12 @@ def test_cli_show_and_attach_help():
     import sys
 
     root = Path(__file__).resolve().parents[1]
-    for cmd in (["show", "--help"], ["attach", "--help"], ["clab", "show", "--help"]):
+    for cmd in (
+        ["show", "--help"],
+        ["attach", "--help"],
+        ["detach", "--help"],
+        ["clab", "show", "--help"],
+    ):
         proc = subprocess.run(
             [sys.executable, str(root / "acta.py"), *cmd],
             check=False,

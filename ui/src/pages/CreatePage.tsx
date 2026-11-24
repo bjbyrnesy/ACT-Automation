@@ -190,9 +190,11 @@ function buildFacts(
   }
 
   if (stepIndex >= 5) {
+    const spineMlag =
+      body.capacity.fabric_mode === "l2ls" && body.capacity.spines === 2;
     const parts = [
       body.mlag_pairs ? "leaf MLAG" : "no leaf MLAG",
-      body.spine_mlag ? "spine MLAG" : null,
+      spineMlag ? "spine MLAG" : null,
       pairsText.trim() ? `mleaf pairs ${pairsText.trim()}` : null,
     ].filter(Boolean);
     facts.push({
@@ -231,7 +233,7 @@ export function CreatePage() {
   const pairCount = Math.floor(body.capacity.leaves / 2);
   const stepBlurb =
     step.id === "pairing" && isL2
-      ? "Leaf MLAG, optional spine peer-links (L2LS only), and member leaves."
+      ? "Leaf MLAG, spine MLAG (always on for dual-spine L2LS), and member leaves."
       : step.id === "pairing"
         ? "Leaf MLAG pairs and optional member leaves. L3LS spines stay independent."
         : step.blurb;
@@ -342,7 +344,8 @@ export function CreatePage() {
       member_leaves_per_pair: member_leaf_pairs.length
         ? Math.max(1, base.member_leaves_per_pair)
         : 0,
-      spine_mlag: l2 && base.capacity.spines === 2 ? base.spine_mlag : false,
+      // L2LS with two spines always peers; L3LS never does.
+      spine_mlag: l2 && base.capacity.spines === 2,
     };
   }
 
@@ -780,10 +783,22 @@ export function CreatePage() {
                 value={body.capacity.fabric_mode}
                 onChange={(event) => {
                   const mode = event.target.value as CapacityBody["fabric_mode"];
+                  const spines =
+                    mode === "l2ls"
+                      ? Math.min(body.capacity.spines, 2)
+                      : body.capacity.spines;
                   patch({
                     ...body,
-                    spine_mlag: mode === "l2ls" ? body.spine_mlag : false,
-                    capacity: { ...body.capacity, fabric_mode: mode },
+                    spine_mlag: mode === "l2ls" && spines === 2,
+                    capacity: {
+                      ...body.capacity,
+                      fabric_mode: mode,
+                      spines,
+                      max_spines:
+                        mode === "l2ls"
+                          ? Math.min(body.capacity.max_spines, 2)
+                          : body.capacity.max_spines,
+                    },
                   });
                 }}
               >
@@ -793,7 +808,7 @@ export function CreatePage() {
             </label>
             <p className="create-form__hint">
               {isL2
-                ? "L2LS: spines may peer with MLAG when exactly two are deployed."
+                ? "L2LS: dual spines always peer with MLAG (capped at 2 spines)."
                 : "L3LS: routed leaf-spine — spines are never MLAG’d; leaf pairs are optional."}
               {multiDc
                 ? " Multi-site labs typically use L3LS with borders and backbone."
@@ -813,9 +828,14 @@ export function CreatePage() {
                 max={isL2 ? 2 : 32}
                 required
                 value={body.capacity.spines}
-                onChange={(event) =>
-                  capacity("spines", event.target.valueAsNumber)
-                }
+                onChange={(event) => {
+                  const spines = event.target.valueAsNumber;
+                  patch({
+                    ...body,
+                    spine_mlag: isL2 && spines === 2,
+                    capacity: { ...body.capacity, spines },
+                  });
+                }}
               />
             </label>
             <label>
@@ -962,20 +982,13 @@ export function CreatePage() {
                 (and member leaves hung off those pairs) apply here.
               </p>
             ) : body.capacity.spines === 2 ? (
-              <label className="create-form__check">
-                <input
-                  type="checkbox"
-                  checked={body.spine_mlag}
-                  onChange={(event) =>
-                    patch({ ...body, spine_mlag: event.target.checked })
-                  }
-                />
-                Add MLAG peer-links between spines
-              </label>
+              <p className="create-form__hint">
+                Spine MLAG peer-links are always included for dual-spine L2LS.
+              </p>
             ) : (
               <p className="create-form__hint">
-                Spine MLAG needs exactly two spines on an L2LS fabric (currently{" "}
-                {body.capacity.spines}).
+                L2LS spine MLAG needs two spines (currently {body.capacity.spines}
+                ). Add a second spine on the Size step.
               </p>
             )}
             {body.mlag_pairs &&

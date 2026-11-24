@@ -32,6 +32,21 @@
   width: 100%;
 }
 
+.ops-form__fieldset {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ops-form__fieldset legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .ops-form__check {
   display: flex !important;
   align-items: center;

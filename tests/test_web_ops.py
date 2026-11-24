@@ -121,6 +121,13 @@ def test_op_attach_real(act_file: Path) -> None:
     assert "h1" in act_file.read_text()
 
 
+def test_op_detach_real(act_file: Path) -> None:
+    ops.op_attach(act_file, host="h1", to=["demo-leaf1"])
+    result = ops.op_detach(act_file, host="h1")
+    assert result == act_file
+    assert "h1:" not in act_file.read_text()
+
+
 # --- mocked deploy-class ops ----------------------------------------------
 
 
@@ -194,6 +201,7 @@ def test_op_act_onboard_requires_credentials(
         "/api/jobs/act/upload",
         "/api/extend",
         "/api/attach",
+        "/api/detach",
     ],
 )
 def test_routes_missing_path_is_400(client: TestClient, url: str) -> None:
@@ -290,15 +298,45 @@ def test_route_generate_uses_settings_images(
     assert seen["host_image"] == "localhost/acta-host-multitool:v0.10.0-mcast0.2.3"
 
 
+def test_route_deploy_uses_clab_runtime_env(
+    client: TestClient, act_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty labs .config still picks systemd Environment=CLAB_RUNTIME."""
+    monkeypatch.setenv("CLAB_RUNTIME", "docker")
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(
+        ops, "op_clab_deploy", lambda path, **kw: seen.update(path=path, **kw)
+    )
+    response = client.post(
+        "/api/jobs/clab/deploy",
+        json={"path": act_file.name, "from_act": True},
+    )
+    assert response.status_code == 200
+    assert _wait(response.json()["id"]).status == "succeeded"
+    assert seen["runtime"] == "docker"
+
+
 def test_op_clab_deploy_passes_none_runtime_through(
     act_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Web ops must not force podman before deploy's auto-detect runs."""
+    monkeypatch.delenv("CLAB_RUNTIME", raising=False)
     seen: dict[str, Any] = {}
     _patch_clab(monkeypatch, "deploy", lambda args: seen.update(vars(args)))
     ops.op_clab_deploy(act_file, host="lab1", runtime=None)
     assert seen["host"] == "lab1"
     assert seen.get("runtime") in (None, "")
+
+
+def test_op_clab_deploy_honors_clab_runtime_env(
+    act_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """systemd Environment=CLAB_RUNTIME must reach deploy without a .config entry."""
+    monkeypatch.setenv("CLAB_RUNTIME", "docker")
+    seen: dict[str, Any] = {}
+    _patch_clab(monkeypatch, "deploy", lambda args: seen.update(vars(args)))
+    ops.op_clab_deploy(act_file, host="lab1")
+    assert seen["runtime"] == "docker"
 
 
 def test_route_job_failure_recorded(

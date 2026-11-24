@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="acta.py",
         description=(
-            "ACT Automation — acta.py act … / clab … plus show, attach, and ssh. "
+            "ACT Automation — acta.py act … / clab … plus show, attach, detach, and ssh. "
             "Capacity reserved at create time; extend only uses unused ports "
             "(existing endpoints stay fixed). Attach hosts after the fabric exists."
         ),
@@ -307,6 +307,38 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Ethernet port on the switch (MLAG peers or --mleaf target)",
     )
+    mlag_home = attach.add_mutually_exclusive_group()
+    mlag_home.add_argument(
+        "--dual-homed",
+        dest="dual_homed",
+        action="store_true",
+        default=None,
+        help="With --mlag-pair: attach to both leaves (default)",
+    )
+    mlag_home.add_argument(
+        "--single-homed",
+        dest="dual_homed",
+        action="store_false",
+        help="With --mlag-pair: attach to one leaf only (see --mlag-side)",
+    )
+    attach.add_argument(
+        "--mlag-side",
+        choices=("a", "b", "1", "2"),
+        default=None,
+        help="With --single-homed: which leaf of the pair (a/1=odd, b/2=even)",
+    )
+
+    detach = sub.add_parser(
+        "detach",
+        help="Detach a previously attached host from ACT (and sibling .clab.yml)",
+    )
+    detach.add_argument(
+        "object_type",
+        choices=("host",),
+        help="Object to detach (v1: host)",
+    )
+    detach.add_argument("name", help="Host hostname to remove")
+    detach.add_argument("topology", type=Path, help="ACT topology YAML or .clab.yml")
 
     serve = sub.add_parser(
         "serve",
@@ -676,6 +708,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "attach":
             from acta.attach import run_attach
 
+            dual_homed = True if args.dual_homed is None else args.dual_homed
             run_attach(
                 args.object_type,
                 args.name,
@@ -684,6 +717,18 @@ def main(argv: list[str] | None = None) -> int:
                 mlag_pair=args.mlag_pair,
                 mleaf=args.mleaf,
                 et=args.et,
+                dual_homed=dual_homed,
+                mlag_side=args.mlag_side,
+                project_dir=Path.cwd(),
+            )
+            return 0
+        if args.command == "detach":
+            from acta.attach import run_detach
+
+            run_detach(
+                args.object_type,
+                args.name,
+                args.topology,
                 project_dir=Path.cwd(),
             )
             return 0

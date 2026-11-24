@@ -15,7 +15,7 @@ def test_acta_help_lists_platform_namespaces():
     assert proc.returncode == 0
     out = proc.stdout
     assert "act" in out and "clab" in out
-    assert "show" in out and "attach" in out
+    assert "show" in out and "attach" in out and "detach" in out
     assert "ssh" in out
     assert "serve" in out
     # Top-level ACT verbs must not remain as peer commands of act/clab.

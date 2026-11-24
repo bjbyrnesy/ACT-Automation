@@ -61,7 +61,11 @@ def _clab_args(topology: Path, **kwargs: Any) -> Any:
     )
 
     config = read_config()
-    runtime = (config.get("CLAB_RUNTIME") or "").strip().lower()
+    runtime = (
+        (config.get("CLAB_RUNTIME") or os.environ.get("CLAB_RUNTIME") or "")
+        .strip()
+        .lower()
+    )
     if runtime not in {"docker", "podman"}:
         runtime = None
     values: dict[str, Any] = {
@@ -293,6 +297,9 @@ def op_attach(path: Path, **kwargs: Any) -> Path:
     host = kwargs.pop("host", None)
     if not host:
         raise WebError(400, "host is required", fields={"host": "required"})
+    dual_homed = kwargs.get("dual_homed")
+    if dual_homed is None:
+        dual_homed = True
     with _quiet():
         result = run_attach(
             "host",
@@ -302,6 +309,26 @@ def op_attach(path: Path, **kwargs: Any) -> Path:
             mlag_pair=kwargs.get("mlag_pair"),
             mleaf=kwargs.get("mleaf"),
             et=kwargs.get("et"),
+            dual_homed=dual_homed,
+            mlag_side=kwargs.get("mlag_side"),
+            project_dir=topology.parent,
+        )
+    return result.path
+
+
+def op_detach(path: Path, **kwargs: Any) -> Path:
+    """Detach a generic host from a topology and return the updated file path."""
+    from acta.attach import run_detach
+
+    topology = require_written_path(path)
+    host = kwargs.pop("host", None)
+    if not host:
+        raise WebError(400, "host is required", fields={"host": "required"})
+    with _quiet():
+        result = run_detach(
+            "host",
+            host,
+            topology,
             project_dir=topology.parent,
         )
     return result.path
