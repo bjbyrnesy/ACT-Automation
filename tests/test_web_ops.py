@@ -401,6 +401,50 @@ def test_route_attach_sync(client: TestClient, act_file: Path) -> None:
     assert "h1" in act_file.read_text()
 
 
+def test_route_attach_host_net(client: TestClient, act_file: Path) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+            "host_ip": "192.168.2.50",
+            "host_subnet": "192.168.2.0/24",
+            "host_gateway": "192.168.2.1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    clab = act_file.with_name(f"{act_file.stem}.clab.yml").read_text()
+    assert "192.168.2.50" in clab
+    assert "192.168.2.1" in clab
+
+
+def test_op_attach_host_net_passthrough(act_file: Path) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    ops.op_attach(act_file, host="h1", to=["demo-leaf1"], host_net=True)
+    clab = act_file.with_name(f"{act_file.stem}.clab.yml").read_text()
+    assert "192.168.2.2" in clab
+
+
+def test_route_attach_host_net_bad_ip_is_400(
+    client: TestClient, act_file: Path
+) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+            "host_ip": "10.9.9.9",
+        },
+    )
+    assert response.status_code == 400
+
+
 def test_op_act_upload_rejects_bad_tenant(act_file: Path) -> None:
     with pytest.raises(WebError) as exc:
         ops.op_act_upload(act_file, tenant="evil.example.com/x#")

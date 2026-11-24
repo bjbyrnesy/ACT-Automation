@@ -312,6 +312,10 @@ def op_attach(path: Path, **kwargs: Any) -> Path:
             dual_homed=dual_homed,
             mlag_side=kwargs.get("mlag_side"),
             project_dir=topology.parent,
+            host_net=bool(kwargs.get("host_net")),
+            host_ip=kwargs.get("host_ip"),
+            host_subnet=kwargs.get("host_subnet"),
+            host_gateway=kwargs.get("host_gateway"),
         )
     return result.path
 

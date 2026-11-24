@@ -82,6 +82,10 @@ class AttachBody(_Body):
     et: int | None = None
     dual_homed: bool | None = None
     mlag_side: str | None = None
+    host_net: bool | None = None
+    host_ip: str | None = None
+    host_subnet: str | None = None
+    host_gateway: str | None = None
 
 
 class DetachBody(_Body):
