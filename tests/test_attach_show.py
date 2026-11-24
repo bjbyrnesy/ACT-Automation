@@ -576,3 +576,208 @@ def test_cli_show_and_attach_help():
         if cmd[0] == "show" or cmd[:2] == ["clab", "show"]:
             assert "--host" in proc.stdout
             assert "--runtime" in proc.stdout
+
+
+_CLAB_SEED = (
+    "name: demo\n"
+    "mgmt:\n"
+    "  ipv4-subnet: 172.100.100.0/22\n"
+    "topology:\n"
+    "  nodes:\n"
+    "    demo-leaf1:\n"
+    "      kind: arista_ceos\n"
+    "      mgmt-ipv4: 172.100.100.2\n"
+    "  links: []\n"
+)
+
+
+def _topo_with_clab(tmp_path: Path) -> tuple[Path, Path]:
+    from acta.clab.support import MARKER
+
+    act = _topo(tmp_path)
+    clab = tmp_path / "topology-demo.clab.yml"
+    clab.write_text(MARKER + _CLAB_SEED, encoding="utf-8")
+    return act, clab
+
+
+def _clab_node(clab: Path, host: str) -> dict:
+    import yaml
+
+    data = yaml.safe_load(clab.read_text(encoding="utf-8"))
+    return data["topology"]["nodes"][host]
+
+
+def test_attach_host_net_writes_clab_labels_and_artifacts(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(
+        act,
+        "jump1",
+        to=["demo-leaf1:Ethernet10"],
+        host_net=True,
+    )
+    node = _clab_node(clab, "jump1")
+    assert node["labels"]["acta.host-net"] == "true"
+    assert node["labels"]["acta.host-ip"] == "192.168.2.2"
+    assert node["labels"]["acta.host-iface"] == "eth1"
+    artifacts = tmp_path / "topology-demo.host-net" / "jump1"
+    assert (artifacts / "bootstrap.sh").is_file()
+    assert (artifacts / "HOST-NET.env").is_file()
+    assert any("bootstrap.sh" in bind for bind in node["binds"])
+
+
+def test_attach_without_host_net_has_no_labels(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"])
+    node = _clab_node(clab, "jump1")
+    assert "acta.host-net" not in (node.get("labels") or {})
+    assert "binds" not in node
+    assert not (tmp_path / "topology-demo.host-net").exists()
+
+
+def test_attach_host_net_dual_homed_uses_bond_and_next_ip(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True)
+    attach_host_act(act, "jump2", mlag_pair=1, et=11, host_net=True)
+    node = _clab_node(clab, "jump2")
+    assert node["labels"]["acta.host-iface"] == "bond0"
+    assert node["labels"]["acta.host-ip"] == "192.168.2.3"
+
+
+def test_attach_host_net_explicit_ip_and_overrides(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(
+        act,
+        "jump1",
+        to=["demo-leaf1:Ethernet10"],
+        host_net=True,
+        host_ip="10.9.0.50",
+        host_subnet="10.9.0.0/24",
+        host_gateway="10.9.0.1",
+    )
+    labels = _clab_node(clab, "jump1")["labels"]
+    assert labels["acta.host-ip"] == "10.9.0.50"
+    assert labels["acta.host-gateway"] == "10.9.0.1"
+
+
+def test_attach_host_net_uses_config_subnet(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(
+        act,
+        "jump1",
+        to=["demo-leaf1:Ethernet10"],
+        host_net=True,
+        config={"HOST_NET_SUBNET": "10.7.0.0/24", "HOST_NET_GATEWAY": "10.7.0.1"},
+    )
+    assert _clab_node(clab, "jump1")["labels"]["acta.host-ip"] == "10.7.0.2"
+
+
+def test_attach_host_net_rejects_claimed_ip(tmp_path: Path):
+    act, _clab = _topo_with_clab(tmp_path)
+    attach_host_act(
+        act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True, host_ip="192.168.2.9"
+    )
+    with pytest.raises(ValueError, match="already in use"):
+        attach_host_act(
+            act,
+            "jump2",
+            to=["demo-leaf2:Ethernet10"],
+            host_net=True,
+            host_ip="192.168.2.9",
+        )
+
+
+def test_claimed_excluding_host_drops_own_ip(tmp_path: Path):
+    from acta.attach import claimed_ips_excluding_host
+
+    act, clab = _topo_with_clab(tmp_path)
+    attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True)
+    attach_host_act(act, "jump2", to=["demo-leaf2:Ethernet10"], host_net=True)
+    assert claimed_ips_excluding_host(clab, "jump1") == {"192.168.2.3"}
+
+
+def test_detach_removes_host_net_artifacts(tmp_path: Path):
+    act, _clab = _topo_with_clab(tmp_path)
+    attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True)
+    attach_host_act(act, "jump2", to=["demo-leaf2:Ethernet10"], host_net=True)
+    base = tmp_path / "topology-demo.host-net"
+    assert (base / "jump1").is_dir()
+    run_detach("host", "jump1", act)
+    assert not (base / "jump1").exists()
+    assert (base / "jump2").is_dir()
+
+
+def test_run_attach_host_net_passthrough(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    run_attach(
+        "host",
+        "jump1",
+        act,
+        to=["demo-leaf1:Ethernet10"],
+        host_net=True,
+        host_ip="192.168.2.40",
+        project_dir=tmp_path,
+    )
+    assert _clab_node(clab, "jump1")["labels"]["acta.host-ip"] == "192.168.2.40"
+
+
+def test_attach_host_net_binds_are_relative_to_clab(tmp_path: Path):
+    act, clab = _topo_with_clab(tmp_path)
+    result = attach_host_act(act, "jump1", to=["demo-leaf1:Ethernet10"], host_net=True)
+    binds = _clab_node(clab, "jump1")["binds"]
+    assert binds[0] == (
+        "topology-demo.host-net/jump1/bootstrap.sh:/etc/acta-host-net/bootstrap.sh:ro"
+    )
+    assert not any(bind.startswith("/") for bind in binds)
+    assert result.host_net is not None
+    assert result.host_net.ip == "192.168.2.2"
+
+
+@pytest.mark.parametrize("sync_sibling", [True, False])
+def test_attach_host_net_without_sibling_raises_before_write(
+    tmp_path: Path, sync_sibling: bool
+):
+    act = _topo(tmp_path)
+    original = act.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="sibling .clab.yml"):
+        attach_host_act(
+            act,
+            "jump1",
+            to=["demo-leaf1:Ethernet10"],
+            host_net=True,
+            sync_sibling=sync_sibling,
+        )
+    assert act.read_text(encoding="utf-8") == original
+
+
+def test_run_attach_prints_data_plane_address(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    act, _clab = _topo_with_clab(tmp_path)
+    run_attach(
+        "host",
+        "jump1",
+        act,
+        mlag_pair=1,
+        et=11,
+        host_net=True,
+        project_dir=tmp_path,
+    )
+    assert "Data-plane: 192.168.2.2/24 on bond0 via 192.168.2.1" in (
+        capsys.readouterr().out
+    )
+
+
+def test_cli_attach_help_lists_host_net_flags():
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, str(root / "acta.py"), "attach", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    for flag in ("--host-net", "--host-ip", "--host-subnet", "--host-gateway"):
+        assert flag in proc.stdout

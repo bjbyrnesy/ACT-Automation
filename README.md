@@ -501,7 +501,8 @@ pick up a new bridge.
 `.config` keys (CLI wins): `CLAB_NAME`, `CLAB_IMAGE`, `CLAB_HOST`, `CLAB_RUNTIME`
 (`docker`|`podman`; when unset, deploy/destroy/redeploy auto-detect),
 `CLAB_HOST_IMAGE`, `CLAB_FROM_ACT`, `CLAB_MGMT_*`, `CLAB_DNS`, `CLAB_NTP`,
-`CLAB_DISABLEAAA`, `CVAAS_HOST`, `CVAAS_TOKEN`, …
+`CLAB_DISABLEAAA`, `HOST_NET_SUBNET`, `HOST_NET_GATEWAY`, `CVAAS_HOST`,
+`CVAAS_TOKEN`, …
 
 cEOS is not on Docker Hub. Load an Arista archive on the lab host with Web UI
 **Images → Upload & load**, or `docker load` / `podman load`. An optional
@@ -555,6 +556,10 @@ python acta.py attach host jump2 topology-….yml --mlag-pair 1 --et 11
 python acta.py attach host jump2s topology-….yml --mlag-pair 1 --single-homed --mlag-side a
 python acta.py attach host jump3 topology-….yml --mleaf 1
 python acta.py detach host jump2 topology-….yml
+
+# Opt-in data-plane IP (default 192.168.2.0/24, gw .1); dual-homed → LACP bond0
+acta attach host host1 topology-….yml --mlag-pair 1 --host-net
+# Configure matching MLAG Port-Channel + VLAN/SVI in CloudVision
 ```
 
 - ACT → `node_type: generic` (default ubuntu / `ansible`/`ansible`).
@@ -566,11 +571,30 @@ python acta.py detach host jump2 topology-….yml
 - `--mlag-pair` defaults to **dual-homed** (both leaves). Pass `--single-homed`
   (and optional `--mlag-side a|b`) to hang the host off one leaf of the pair.
 - Dual-homed MLAG without `--et` picks one Ethernet free on **both** peers.
+- `--host-net` (opt-in, clab `kind: linux`; Web UI **Attach → Data-plane IP**):
+  allocates the next free IPv4 in `HOST_NET_SUBNET` (default `192.168.2.0/24`,
+  gateway `HOST_NET_GATEWAY` default `192.168.2.1`; override with `--host-ip`,
+  `--host-subnet`, `--host-gateway`), configures `eth1` (single-homed) or LACP
+  `bond0` over `eth1`+`eth2` (dual-homed) via clab `binds`/`exec`, and mounts
+  `/root/HOST-NET.md` + `/root/HOST-NET.env`. ACT configures the **host side
+  only** — configure the matching switch access port or MLAG LACP Port-Channel,
+  VLAN, and SVI in CloudVision.
+  - Requires the sibling `.clab.yml` (run `clab generate` first); attach fails
+    without it and writes nothing. The assigned IP is printed (CLI) / shown in
+    the Attach status (Web UI) and stored as `acta.host-*` node labels.
+  - `clab generate` (and deploy with `--from-act` / `CLAB_FROM_ACT`) re-reads
+    those labels from the existing sibling, so regenerating keeps the IP.
+  - Artifacts live in `<lab>.host-net/<host>/` next to the `.clab.yml` and are
+    bound with **relative** paths. Deploy ships them with the support bundle to
+    `~/.act-automation/clab/<lab>/` on the lab host (local or remote
+    `CLAB_HOST`) and always overwrites the remote copy.
+  - The default route moves to the data-plane interface; `eth0` keeps on-link
+    management access only.
 - Use case policy: datacenter → leaf/mleaf/border only; campus → those plus
   **spines** (common on small L2LS campuses when access ports are scarce).
 - `detach host` removes the generic node and its uplinks from ACT (and the
-  sibling `.clab.yml` when present). Only `node_type: generic` hosts can be
-  detached — fabric switches are left alone.
+  sibling `.clab.yml` + `<lab>.host-net/<host>` artifacts when present). Only
+  `node_type: generic` hosts can be detached — fabric switches are left alone.
 
 Then `clab redeploy` (or destroy+deploy) so the running lab picks up host
 changes.

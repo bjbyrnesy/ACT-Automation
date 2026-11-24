@@ -149,3 +149,15 @@ def test_patch_registry_token_mask_preserves_secret(tmp_path: Path):
     patch_settings(tmp_path, {"CLAB_REGISTRY_TOKEN": "s3cret"})
     patch_settings(tmp_path, {"CLAB_REGISTRY_TOKEN": MASK})
     assert load_config(config_path(tmp_path))["CLAB_REGISTRY_TOKEN"] == "s3cret"
+
+
+def test_host_net_settings_round_trip(tmp_path: Path):
+    from acta.web.settings_api import get_settings, patch_settings
+
+    patched = patch_settings(
+        tmp_path,
+        {"HOST_NET_SUBNET": "192.168.2.0/24", "HOST_NET_GATEWAY": "192.168.2.1"},
+    )
+    assert patched["HOST_NET_SUBNET"] == "192.168.2.0/24"
+    assert patched["HOST_NET_GATEWAY"] == "192.168.2.1"
+    assert get_settings(tmp_path)["HOST_NET_GATEWAY"] == "192.168.2.1"

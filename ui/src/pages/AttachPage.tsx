@@ -22,6 +22,9 @@ type TargetOption = {
 
 type PairHoming = "dual" | "a" | "b";
 
+const DEFAULT_HOST_NET_SUBNET = "192.168.2.0/24";
+const DEFAULT_HOST_NET_GATEWAY = "192.168.2.1";
+
 export function AttachPage() {
   const { active, setActive } = useActiveTopology();
   const [host, setHost] = useState("");
@@ -32,9 +35,41 @@ export function AttachPage() {
   const [et, setEt] = useState("");
   const [targets, setTargets] = useState<AttachTargets | null>(null);
   const [targetsError, setTargetsError] = useState("");
+  const [hostNet, setHostNet] = useState(false);
+  const [hostIp, setHostIp] = useState("");
+  const [hostSubnet, setHostSubnet] = useState("");
+  const [hostGateway, setHostGateway] = useState("");
+  const [netDefaults, setNetDefaults] = useState({
+    subnet: DEFAULT_HOST_NET_SUBNET,
+    gateway: DEFAULT_HOST_NET_GATEWAY,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/settings")
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as Record<string, unknown>;
+        if (cancelled) return;
+        setNetDefaults({
+          subnet:
+            String(body.HOST_NET_SUBNET ?? "").trim() ||
+            DEFAULT_HOST_NET_SUBNET,
+          gateway:
+            String(body.HOST_NET_GATEWAY ?? "").trim() ||
+            DEFAULT_HOST_NET_GATEWAY,
+        });
+      })
+      .catch(() => {
+        /* Placeholders fall back to static defaults. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,6 +223,13 @@ export function AttachPage() {
         }
       }
 
+      if (hostNet) {
+        body.host_net = true;
+        if (hostIp.trim()) body.host_ip = hostIp.trim();
+        if (hostSubnet.trim()) body.host_subnet = hostSubnet.trim();
+        if (hostGateway.trim()) body.host_gateway = hostGateway.trim();
+      }
+
       const result = await attachTopology(body);
       setActive(await loadSavedTopology(result));
       let homeBit = selected.label;
@@ -197,10 +239,16 @@ export function AttachPage() {
             ? "dual-homed"
             : `single-homed (${pairHoming === "a" ? pairPeerA : pairPeerB})`;
       }
-      setStatus(`Attached ${host.trim()} → ${homeBit} → ${result.name}.`);
+      const dataPlane = result.host_net_ip
+        ? ` Data-plane ${result.host_net_ip} on ${result.host_net_iface ?? "?"}.`
+        : "";
+      setStatus(
+        `Attached ${host.trim()} → ${homeBit} → ${result.name}.${dataPlane}`,
+      );
       setHost("");
       setTargetKey("");
       setPairHoming("dual");
+      setHostIp("");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (/already exists/i.test(message)) {
@@ -345,6 +393,46 @@ export function AttachPage() {
             onChange={(event) => setEt(event.target.value)}
           />
         </label>
+        <label className="ops-form__check">
+          <input
+            type="checkbox"
+            checked={hostNet}
+            onChange={(event) => setHostNet(event.target.checked)}
+          />
+          Data-plane IP
+        </label>
+        {hostNet ? (
+          <>
+            <label>
+              Host IP (optional)
+              <input
+                value={hostIp}
+                onChange={(event) => setHostIp(event.target.value)}
+                placeholder="auto (next free)"
+              />
+            </label>
+            <label>
+              Subnet (optional)
+              <input
+                value={hostSubnet}
+                onChange={(event) => setHostSubnet(event.target.value)}
+                placeholder={netDefaults.subnet}
+              />
+            </label>
+            <label>
+              Gateway (optional)
+              <input
+                value={hostGateway}
+                onChange={(event) => setHostGateway(event.target.value)}
+                placeholder={netDefaults.gateway}
+              />
+            </label>
+            <p className="ops-form__hint">
+              Needs a sibling .clab.yml. Blank fields use Settings
+              (HOST_NET_SUBNET / HOST_NET_GATEWAY) or the built-in defaults.
+            </p>
+          </>
+        ) : null}
         {campusSpines ? (
           <p className="ops-form__hint">
             Campus use case: spines are valid attach targets (common when

@@ -401,6 +401,109 @@ def test_route_attach_sync(client: TestClient, act_file: Path) -> None:
     assert "h1" in act_file.read_text()
 
 
+def test_route_attach_host_net(client: TestClient, act_file: Path) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+            "host_ip": "192.168.2.50",
+            "host_subnet": "192.168.2.0/24",
+            "host_gateway": "192.168.2.1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    clab = act_file.with_name(f"{act_file.stem}.clab.yml").read_text()
+    assert "192.168.2.50" in clab
+    assert "192.168.2.1" in clab
+
+
+def test_op_attach_host_net_passthrough(act_file: Path) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    ops.op_attach(act_file, host="h1", to=["demo-leaf1"], host_net=True)
+    clab = act_file.with_name(f"{act_file.stem}.clab.yml").read_text()
+    assert "192.168.2.2" in clab
+
+
+def test_route_attach_host_net_returns_assigned_ip(
+    client: TestClient, act_file: Path
+) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["host_net_ip"] == "192.168.2.2/24"
+    assert body["host_net_iface"] == "eth1"
+
+
+def test_route_attach_host_net_without_sibling_is_400(
+    client: TestClient, act_file: Path
+) -> None:
+    original = act_file.read_text()
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+        },
+    )
+    assert response.status_code == 400
+    assert "sibling .clab.yml" in response.text
+    assert act_file.read_text() == original
+
+
+def test_regenerate_preserves_host_net(act_file: Path) -> None:
+    import yaml
+
+    from acta.attach import attach_host_act
+
+    clab = ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    attach_host_act(
+        act_file, "h1", to=["demo-leaf1"], host_net=True, host_ip="192.168.2.77"
+    )
+    artifacts = act_file.with_name(f"{act_file.stem}.host-net") / "h1"
+    (artifacts / "bootstrap.sh").unlink()
+
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+
+    node = yaml.safe_load(clab.read_text())["topology"]["nodes"]["h1"]
+    assert node["labels"]["acta.host-net"] in ("true", True)
+    assert node["labels"]["acta.host-ip"] == "192.168.2.77"
+    assert node["exec"][-1] == "sh /etc/acta-host-net/bootstrap.sh"
+    assert node["binds"][0].startswith(f"{act_file.stem}.host-net/h1/bootstrap.sh:")
+    assert "192.168.2.77/24" in (artifacts / "bootstrap.sh").read_text()
+
+
+def test_route_attach_host_net_bad_ip_is_400(
+    client: TestClient, act_file: Path
+) -> None:
+    ops.op_clab_generate(act_file, name="demo", image="ceos:4.35.4M")
+    response = client.post(
+        "/api/attach",
+        json={
+            "path": str(act_file),
+            "host": "h1",
+            "to": ["demo-leaf1"],
+            "host_net": True,
+            "host_ip": "10.9.9.9",
+        },
+    )
+    assert response.status_code == 400
+
+
 def test_op_act_upload_rejects_bad_tenant(act_file: Path) -> None:
     with pytest.raises(WebError) as exc:
         ops.op_act_upload(act_file, tenant="evil.example.com/x#")

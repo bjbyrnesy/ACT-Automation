@@ -82,6 +82,10 @@ class AttachBody(_Body):
     et: int | None = None
     dual_homed: bool | None = None
     mlag_side: str | None = None
+    host_net: bool | None = None
+    host_ip: str | None = None
+    host_subnet: str | None = None
+    host_gateway: str | None = None
 
 
 class DetachBody(_Body):
@@ -204,7 +208,16 @@ def extend(body: ExtendBody, request: Request) -> dict[str, str]:
 @router.post("/api/attach")
 def attach(body: AttachBody, request: Request) -> dict[str, str]:
     path, opts = _resolve(request, body.path), body.options()
-    return _sync(lambda: ops.op_attach(path, **opts))
+    try:
+        result = ops.op_attach_result(path, **opts)
+    except _SYNC_ERRORS as exc:
+        raise WebError(400, str(exc)) from exc
+    out = {"path": str(result.path), "name": result.path.name}
+    plan = result.host_net
+    if plan is not None:
+        out["host_net_ip"] = f"{plan.ip}/{plan.prefixlen}"
+        out["host_net_iface"] = plan.iface
+    return out
 
 
 @router.post("/api/detach")

@@ -10,6 +10,8 @@ type Settings = {
   CLAB_REGISTRY: string;
   CLAB_REGISTRY_USER: string;
   CLAB_REGISTRY_TOKEN: string | null;
+  HOST_NET_SUBNET: string;
+  HOST_NET_GATEWAY: string;
   ACT_TENANT: string;
   ACT_USER: string;
   ACT_API_KEY: string | null;
@@ -32,6 +34,8 @@ const EMPTY: Settings = {
   CLAB_REGISTRY: "",
   CLAB_REGISTRY_USER: "",
   CLAB_REGISTRY_TOKEN: null,
+  HOST_NET_SUBNET: "",
+  HOST_NET_GATEWAY: "",
   ACT_TENANT: "",
   ACT_USER: "",
   ACT_API_KEY: null,
@@ -62,6 +66,8 @@ function asSettings(raw: Record<string, unknown>): Settings {
       raw.CLAB_REGISTRY_TOKEN === null || raw.CLAB_REGISTRY_TOKEN === undefined
         ? null
         : String(raw.CLAB_REGISTRY_TOKEN),
+    HOST_NET_SUBNET: String(raw.HOST_NET_SUBNET ?? ""),
+    HOST_NET_GATEWAY: String(raw.HOST_NET_GATEWAY ?? ""),
     ACT_TENANT: String(raw.ACT_TENANT ?? ""),
     ACT_USER: String(raw.ACT_USER ?? ""),
     ACT_API_KEY:
@@ -129,6 +135,8 @@ export function SettingsPage() {
           CLAB_REGISTRY: form.CLAB_REGISTRY,
           CLAB_REGISTRY_USER: form.CLAB_REGISTRY_USER,
           CLAB_REGISTRY_TOKEN: form.CLAB_REGISTRY_TOKEN,
+          HOST_NET_SUBNET: form.HOST_NET_SUBNET,
+          HOST_NET_GATEWAY: form.HOST_NET_GATEWAY,
           ACT_TENANT: form.ACT_TENANT,
           ACT_USER: form.ACT_USER,
           ACT_API_KEY: form.ACT_API_KEY,
@@ -209,6 +217,24 @@ export function SettingsPage() {
               value={form.CLAB_HOST_IMAGE}
               onChange={(event) =>
                 update("CLAB_HOST_IMAGE", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            HOST_NET_SUBNET
+            <input
+              value={form.HOST_NET_SUBNET}
+              placeholder="192.168.2.0/24"
+              onChange={(event) => update("HOST_NET_SUBNET", event.target.value)}
+            />
+          </label>
+          <label>
+            HOST_NET_GATEWAY
+            <input
+              value={form.HOST_NET_GATEWAY}
+              placeholder="192.168.2.1"
+              onChange={(event) =>
+                update("HOST_NET_GATEWAY", event.target.value)
               }
             />
           </label>

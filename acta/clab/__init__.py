@@ -8,6 +8,16 @@ from .cli import main
 from .deploy import deploy, redeploy
 from .destroy import destroy
 from .generate import BASE_CONFIG, generate, management_settings, yaml_text
+from .host_net import (
+    DEFAULT_HOST_NET_GATEWAY,
+    DEFAULT_HOST_NET_SUBNET,
+    HostNetPlan,
+    host_net_artifact_dir,
+    host_net_labels,
+    resolve_host_net,
+    validate_host_net,
+    write_host_net_files,
+)
 from .layout import topology_layout, viewer_annotations
 from .onboard import (
     ceos_nodes,
@@ -65,6 +75,8 @@ __all__ = [
     "CLI_ERROR",
     "CONFIG_KEY",
     "DEFAULT_HOST_IMAGE",
+    "DEFAULT_HOST_NET_GATEWAY",
+    "DEFAULT_HOST_NET_SUBNET",
     "DEPLOY_SCRIPT",
     "DESTROY_SCRIPT",
     "DOCKER_LIST_SCRIPT",
@@ -77,6 +89,7 @@ __all__ = [
     "RUNTIME_PROBE_SCRIPT",
     "RUNTIME_WHICH_SCRIPT",
     "SUPPORT_SCRIPT",
+    "HostNetPlan",
     "act_hostname",
     "argparse",
     "ceos_nodes",
@@ -92,6 +105,8 @@ __all__ = [
     "fail",
     "generate",
     "getpass",
+    "host_net_artifact_dir",
+    "host_net_labels",
     "host_run",
     "hostname_prefix_from_act",
     "inventory_hostname",
@@ -107,15 +122,18 @@ __all__ = [
     "redeploy",
     "resolve_clab_lab_name",
     "resolve_clab_runtime",
+    "resolve_host_net",
     "resolve_topology_path",
     "short_node_name",
     "subprocess",
     "support_bundle",
     "topology_layout",
     "validate_enrollment_token",
+    "validate_host_net",
     "validate_lab",
     "validate_network_name",
     "viewer_annotations",
     "wait_for_eos",
+    "write_host_net_files",
     "yaml_text",
 ]
