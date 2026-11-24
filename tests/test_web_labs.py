@@ -52,6 +52,7 @@ def test_write_then_read_uses_basename_and_preserves_text(tmp_path: Path) -> Non
         "path": str(path),
         "name": path.name,
         "lab_id": "fabric",
+        "mgmt_ips": {},
     }
     assert [entry["name"] for entry in list_topologies(tmp_path)] == [path.name]
 
