@@ -268,7 +268,17 @@ Flags pass through to `acta serve`:
 ```bash
 bash scripts/serve-ui.sh --no-open              # do not open a browser
 bash scripts/serve-ui.sh --port 9000            # alternate port
-bash scripts/serve-ui.sh --root /path/to/labs   # labs directory
+bash scripts/serve-ui.sh --root /path/to/labs   # override labs directory
+```
+
+Topology YAML lives under **`labs/`** (gitignored local working copy). The Web UI
+defaults to `--root labs`. Tracked samples are in **`examples/`** — copy one in
+before opening the UI:
+
+```bash
+mkdir -p labs
+cp examples/campus-l2ls.yml labs/
+bash scripts/serve-ui.sh --no-open
 ```
 
 ### Run it step by step

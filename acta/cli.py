@@ -328,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--root",
         type=Path,
         default=None,
-        help="Labs directory for topologies (default: cwd)",
+        help="Labs directory for topologies (default: ./labs)",
     )
     serve.add_argument(
         "--no-open",
@@ -693,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             run_serve(
                 host=args.host,
                 port=args.port,
-                labs_root=args.root or Path.cwd(),
+                labs_root=args.root,
                 open_browser=not args.no_open,
             )
             return 0
