@@ -169,6 +169,18 @@ export function roleLabel(role: NodeRole): string {
   }
 }
 
+/** Overlay live/clab management IPs onto ACT-parsed nodes (mutates in place). */
+export function applyMgmtIps(
+  nodes: TopologyNode[],
+  mgmtIps: Record<string, string> | null | undefined,
+): void {
+  if (!mgmtIps) return;
+  for (const node of nodes) {
+    const ip = mgmtIps[node.name];
+    if (ip) node.ipAddr = ip;
+  }
+}
+
 /**
  * Assign site letters to hosts from fabric peers (same rule as acta.diagram).
  * Mutates ``nodes`` in place and rebuilds ``bySite`` / ``sites``.

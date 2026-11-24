@@ -1,6 +1,7 @@
 /** Parse ACT topology YAML into a graph for the CV-style diagram. */
 
 import {
+  applyMgmtIps,
   assignHostSites,
   parseTopologySummary,
   rebuildSiteIndex,
@@ -25,10 +26,20 @@ export type TopologyGraph = {
 const CONN_RE =
   /connection:\s*\[([^:]+):Ethernet(\d+),\s*([^:]+):Ethernet(\d+)\]/g;
 
+export type ParseTopologyOptions = {
+  /** Prefer clab/live management IPs over ACT ``ip_addr`` placeholders. */
+  mgmtIps?: Record<string, string> | null;
+};
+
 /** Full topology graph (nodes from summary + Ethernet connections). */
-export function parseTopologyGraph(yamlText: string): TopologyGraph | null {
+export function parseTopologyGraph(
+  yamlText: string,
+  options: ParseTopologyOptions = {},
+): TopologyGraph | null {
   const summary = parseTopologySummary(yamlText);
   if (!summary || summary.nodeCount === 0) return null;
+
+  applyMgmtIps(summary.nodes, options.mgmtIps);
 
   const links: GraphLink[] = [];
   for (const match of yamlText.matchAll(CONN_RE)) {

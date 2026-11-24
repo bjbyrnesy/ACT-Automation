@@ -114,6 +114,8 @@ export type SavedTopology = {
   name: string;
   lab_id?: string;
   yaml_text?: string;
+  /** Prefer these over ACT ``ip_addr`` (clab sibling / live inspect). */
+  mgmt_ips?: Record<string, string>;
 };
 
 export type AttachMlagPair = {
@@ -193,14 +195,21 @@ export function previewSavedTopology(yamlText: string) {
 }
 
 export async function loadSavedTopology(result: SavedTopology) {
-  const saved = result.yaml_text ? result : await getTopology(result.name);
-  if (!saved.yaml_text) throw new Error("Saved topology has no YAML");
+  // Always refresh from GET when possible so mgmt_ips stay current after clab generate.
+  const saved =
+    result.yaml_text && result.mgmt_ips
+      ? result
+      : await getTopology(result.name).catch(() => result);
+  if (!saved.yaml_text && !result.yaml_text) {
+    throw new Error("Saved topology has no YAML");
+  }
   const name = result.name || saved.name;
   return {
     path: result.path || saved.path || null,
     name,
     labId: result.lab_id || saved.lab_id || labIdFromFilename(name),
-    yamlText: saved.yaml_text,
+    yamlText: saved.yaml_text || result.yaml_text || "",
+    mgmtIps: saved.mgmt_ips ?? result.mgmt_ips ?? null,
     // SPA renders CvDiagram from YAML; Graphviz PNG is unused in the pane.
     pngBase64: null,
     isDraft: false,

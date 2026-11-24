@@ -17,8 +17,10 @@ export function TopologyPane() {
   const creating = pathname === "/new" || pathname.startsWith("/new/");
   const [showYaml, setShowYaml] = useState(false);
   const summary = useMemo(
-    () => parseTopologyGraph(active.yamlText)?.summary ?? null,
-    [active.yamlText],
+    () =>
+      parseTopologyGraph(active.yamlText, { mgmtIps: active.mgmtIps })?.summary ??
+      null,
+    [active.yamlText, active.mgmtIps],
   );
   const hasYaml = Boolean(active.yamlText);
 
@@ -75,6 +77,7 @@ export function TopologyPane() {
         {hasYaml ? (
           <CvDiagram
             yamlText={active.yamlText}
+            mgmtIps={active.mgmtIps}
             emptyLabel="Topology YAML did not parse into a diagram."
           />
         ) : creating && wizard?.sitesCommitted ? (

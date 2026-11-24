@@ -12,6 +12,8 @@ export type ActiveTopology = {
   name: string | null;
   labId: string | null;
   yamlText: string;
+  /** Hostname → management IPv4 from clab sibling / live inspect when known. */
+  mgmtIps: Record<string, string> | null;
   pngBase64: string | null;
   isDraft: boolean;
 };
@@ -27,6 +29,7 @@ const EMPTY: ActiveTopology = {
   name: null,
   labId: null,
   yamlText: "",
+  mgmtIps: null,
   pngBase64: null,
   isDraft: false,
 };

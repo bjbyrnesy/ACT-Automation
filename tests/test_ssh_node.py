@@ -96,7 +96,6 @@ def test_cli_ssh_help():
 
 
 def test_resolve_node_uses_runtime_ps(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("acta.ssh_node._which_runtime", lambda preferred: "podman")
     monkeypatch.setattr(
         "acta.ssh_node.list_running_containers",
         lambda runtime: ["blz2-A-leaf1", "blz2-host1"],
@@ -105,6 +104,30 @@ def test_resolve_node_uses_runtime_ps(monkeypatch: pytest.MonkeyPatch):
     node = resolve_node("host1", runtime="podman")
     assert node.container == "blz2-host1"
     assert node.kind == "linux"
+    assert node.runtime == "podman"
+
+
+def test_resolve_node_falls_through_empty_podman_to_docker(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Docker-only labs: podman is on PATH but has no containers."""
+
+    def fake_which(name: str) -> str | None:
+        return f"/usr/bin/{name}" if name in {"podman", "docker"} else None
+
+    def fake_ps(runtime: str) -> list[str]:
+        if runtime == "podman":
+            return []
+        return ["campus-spine1", "campus-leaf1"]
+
+    monkeypatch.setattr("acta.ssh_node.shutil.which", fake_which)
+    monkeypatch.setattr("acta.ssh_node.list_running_containers", fake_ps)
+    monkeypatch.setattr(
+        "acta.ssh_node.detect_kind", lambda runtime, container: "arista_ceos"
+    )
+    node = resolve_node("campus-spine1")
+    assert node.runtime == "docker"
+    assert node.container == "campus-spine1"
 
 
 def test_detect_kind_ignores_go_template_no_value(monkeypatch: pytest.MonkeyPatch):

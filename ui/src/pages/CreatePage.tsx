@@ -374,6 +374,7 @@ export function CreatePage() {
           name: null,
           labId: null,
           yamlText: result.yaml_text,
+          mgmtIps: null,
           pngBase64: null,
           isDraft: true,
         });
@@ -527,6 +528,7 @@ export function CreatePage() {
         name: result.name,
         labId: result.lab_id,
         yamlText: preview.yaml_text,
+        mgmtIps: null,
         pngBase64: null,
         isDraft: false,
       });
