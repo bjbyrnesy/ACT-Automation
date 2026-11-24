@@ -44,6 +44,7 @@ export function ImagesPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
+  const [warning, setWarning] = useState("");
   const [job, setJob] = useState<Job | null>(null);
 
   const refresh = useCallback(async () => {
@@ -54,6 +55,7 @@ export function ImagesPage() {
       setRows(result.images);
       setRuntime(result.runtime);
       setHost(result.host);
+      setWarning(result.warning ?? "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -183,6 +185,7 @@ export function ImagesPage() {
           {error}
         </p>
       ) : null}
+      {warning ? <p className="page-status">{warning}</p> : null}
       {status ? <p className="page-status">{status}</p> : null}
 
       <table className="labs-table images-page__table">

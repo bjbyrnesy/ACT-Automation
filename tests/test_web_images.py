@@ -873,3 +873,189 @@ def test_push_rejects_option_like_image(client, tmp_path) -> None:  # type: igno
     _save_registry(tmp_path)
     r = client.post("/api/jobs/images/push", json={"image": "--all-tags"})
     assert r.status_code == 400
+
+
+# --- Final-review fixes: podman JSON, Docker ref rules, registry validation ---
+
+
+def test_parse_images_json_podman_shape() -> None:
+    from datetime import datetime
+
+    raw = (
+        '{"Id":"sha256:0123456789abcdef","Repository":"localhost/ceos","Tag":"4.37.0F",'
+        '"Size":313884300,"Created":1700000000}\n'
+    )
+    row = parse_images_json(raw)[0]
+    assert row["size"] == "299.3MB"
+    assert row["id"] == "sha256:01234"
+    assert row["created"] == datetime.fromtimestamp(1700000000).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+
+def test_parse_images_json_prefers_created_at() -> None:
+    raw = '[{"Repository":"a","Tag":"1","Size":512,"Created":1700000000,"CreatedAt":"2023-11-14 UTC"}]'
+    row = parse_images_json(raw)[0]
+    assert row["created"] == "2023-11-14 UTC"
+    assert row["size"] == "512B"
+
+
+def test_list_host_images_bad_json_raises_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web import images as img
+
+    monkeypatch.setattr(
+        img, "host_run", lambda host, script, args, data: _Proc(stdout="not json{")
+    )
+    with pytest.raises(WebError) as ei:
+        img.list_host_images(host=None, runtime="docker")
+    assert ei.value.status_code == 502
+
+
+@pytest.mark.parametrize(
+    ("registry", "image", "expected"),
+    [
+        ("hub.io/acta", "acta/ceos:1", "hub.io/acta/acta/ceos:1"),
+        ("hub.io", "acta/ceos:tag", "hub.io/acta/ceos:tag"),
+        ("hub.io/acta", "other.io:5000/ceos:1", "other.io:5000/ceos:1"),
+        ("hub.io/acta", "other.io/ceos:1", "other.io/ceos:1"),
+        ("localhost:5000", "ceos:1", "localhost:5000/ceos:1"),
+        ("hub.io/acta", "localhost:5000/ceos:1", "localhost:5000/ceos:1"),
+        ("hub.io/acta", "localhost/ceos:1", "hub.io/acta/ceos:1"),
+        ("hub.io/acta", "hub.io/acta/ceos:1", "hub.io/acta/ceos:1"),
+        ("hub.io:5000/acta", "ceos:1", "hub.io:5000/acta/ceos:1"),
+    ],
+)
+def test_registry_image_ref_docker_rules(
+    registry: str, image: str, expected: str
+) -> None:
+    assert registry_image_ref(registry, image) == expected
+
+
+@pytest.mark.parametrize(
+    "registry",
+    ["-evil", "--password=x", "hub io", "hub.io/ac ta", "hub.io;rm", "a:b:c"],
+)
+def test_registry_rejects_unsafe_values(registry: str) -> None:
+    with pytest.raises(WebError) as ei:
+        registry_image_ref(registry, "ceos:1")
+    assert ei.value.status_code == 400
+    assert ei.value.fields == {"CLAB_REGISTRY": "invalid"}
+
+
+def test_push_rejects_bad_registry_before_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from acta.web import images as img
+
+    def boom(*a, **k):  # type: ignore[no-untyped-def]
+        raise AssertionError("host_run must not be called")
+
+    monkeypatch.setattr(img, "host_run", boom)
+    with pytest.raises(WebError):
+        img.push_image(
+            host=None,
+            runtime="docker",
+            image="ceos:1",
+            registry="-bad",
+            user="u",
+            token="t",
+        )
+
+
+def _probe_runner(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    from acta.web import images as img
+
+    monkeypatch.setattr(
+        img, "host_run", lambda host, script, args, data: _Proc(returncode=code)
+    )
+
+
+def test_elevate_runtime_uses_sudo_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from acta.web.images import elevate_runtime
+
+    _probe_runner(monkeypatch, 0)
+    assert elevate_runtime("lab1", "podman") == ("sudo-podman", "")
+
+
+def test_elevate_runtime_root_stays_plain(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web.images import elevate_runtime
+
+    _probe_runner(monkeypatch, 3)
+    assert elevate_runtime(None, "podman") == ("podman", "")
+
+
+def test_elevate_runtime_warns_without_sudo(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web.images import elevate_runtime
+
+    _probe_runner(monkeypatch, 1)
+    runtime, warning = elevate_runtime(None, "podman")
+    assert runtime == "podman"
+    assert warning.startswith("WARNING:") and "sudo podman load" in warning
+
+
+def test_elevate_runtime_ignores_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+    from acta.web import images as img
+
+    def boom(*a, **k):  # type: ignore[no-untyped-def]
+        raise AssertionError("no probe for docker")
+
+    monkeypatch.setattr(img, "host_run", boom)
+    assert img.elevate_runtime(None, "docker") == ("docker", "")
+
+
+def test_sudo_podman_list_skips_resolve_and_passes_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from acta.web import images as img
+
+    seen: list[list[str]] = []
+
+    def fake(host, script, args, data):  # type: ignore[no-untyped-def]
+        seen.append(args)
+        assert "sudo -n podman" in script
+        return _Proc(stdout="")
+
+    def no_resolve(*a, **k):  # type: ignore[no-untyped-def]
+        raise AssertionError("must not re-resolve")
+
+    monkeypatch.setattr(img, "host_run", fake)
+    monkeypatch.setattr(img, "resolve_clab_runtime", no_resolve)
+    assert img.list_host_images(host=None, runtime="sudo-podman") == []
+    assert seen == [["sudo-podman"]]
+
+
+def test_get_api_images_reports_sudo_warning(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    from acta.web import images as img
+
+    monkeypatch.setattr(img, "list_host_images", lambda **kw: [])
+    monkeypatch.setattr(
+        img, "resolve_clab_runtime", lambda host, preferred=None: "podman"
+    )
+    monkeypatch.setattr(img, "elevate_runtime", lambda host, rt: (rt, "WARNING: x"))
+    body = client.get("/api/images").json()
+    assert body["warning"] == "WARNING: x"
+
+
+def test_sudo_runtime_script_runs_via_sudo(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Run the real script with a fake ``sudo`` to prove argv wiring."""
+    import os
+    import subprocess
+
+    from acta.web import images as img
+
+    fake = tmp_path / "sudo"
+    fake.write_text('#!/bin/sh\necho "sudo $*"\n')
+    fake.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    out = subprocess.run(
+        ["bash", "-c", img._PUSH_SCRIPT, "x", "sudo-podman", "reg/ceos:1"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    assert out.stdout.strip() == "sudo -n podman push reg/ceos:1"

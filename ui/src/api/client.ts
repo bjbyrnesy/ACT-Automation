@@ -233,7 +233,12 @@ export type HostImage = {
 export const IMAGE_UPLOAD_MAX_BYTES = 10 * 1024 ** 3;
 
 export function listImages(signal?: AbortSignal) {
-  return getJson<{ images: HostImage[]; runtime: string; host: string }>(
+  return getJson<{
+    images: HostImage[];
+    runtime: string;
+    host: string;
+    warning?: string;
+  }>(
     "/api/images",
     signal,
   );

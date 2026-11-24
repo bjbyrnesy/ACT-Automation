@@ -43,8 +43,14 @@ def _host_and_runtime(request: Request) -> tuple[str | None, str]:
 def get_images(request: Request) -> dict[str, Any]:
     """List images on the configured lab host."""
     host, runtime = _host_and_runtime(request)
-    rows = images.list_host_images(host=host, runtime=runtime)
-    return {"images": rows, "runtime": runtime, "host": host or ""}
+    effective, warning = images.elevate_runtime(host, runtime)
+    rows = images.list_host_images(host=host, runtime=effective)
+    return {
+        "images": rows,
+        "runtime": runtime,
+        "host": host or "",
+        "warning": warning,
+    }
 
 
 def _registry_job(request: Request, body: Any, kind: str) -> dict[str, Any]:
@@ -62,7 +68,7 @@ def _registry_job(request: Request, body: Any, kind: str) -> dict[str, Any]:
         )
     user = raw.get("CLAB_REGISTRY_USER", "").strip()
     token = raw.get("CLAB_REGISTRY_TOKEN", "")
-    # Fail fast on a bad ref instead of inside the job.
+    # Fail fast on a bad registry/ref instead of inside the job.
     images.registry_image_ref(registry, image)
     host, runtime = _host_and_runtime(request)
     action = images.push_image if kind == "push" else images.pull_image
@@ -72,9 +78,12 @@ def _registry_job(request: Request, body: Any, kind: str) -> dict[str, Any]:
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
+                effective, warning = images.elevate_runtime(host, runtime)
+                if warning:
+                    print(warning, flush=True)
                 action(
                     host=host,
-                    runtime=runtime,
+                    runtime=effective,
                     image=image,
                     registry=registry,
                     user=user,
@@ -162,8 +171,11 @@ async def load_image(request: Request) -> dict[str, Any]:
 
     def run() -> None:
         try:
+            effective, warning = images.elevate_runtime(host, runtime)
+            if warning:
+                print(warning, flush=True)
             images.load_archive_on_host(
-                host=host, runtime=runtime, archive_path=dest, name=name, tag=tag
+                host=host, runtime=effective, archive_path=dest, name=name, tag=tag
             )
         finally:
             dest.unlink(missing_ok=True)
